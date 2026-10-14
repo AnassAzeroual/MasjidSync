@@ -21,7 +21,7 @@ both `README.md` and `AI Agent Help context project.md` in the same pass.
 
 ## 3. Never commit secrets
 
-- `keystore.properties`, `*.jks`, `local.properties`, and `app/build/` are gitignored. Keep them that way.
+- `keystore.properties`, `*.jks`, `.key_store/`, `local.properties`, and `app/build/` are gitignored. Keep them that way.
 - Never print or commit keystore passwords or key material.
 
 ## 4. Build verification bar

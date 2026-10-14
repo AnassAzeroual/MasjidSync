@@ -174,11 +174,14 @@ Static APK verification (no device needed):
 ## 7. SIGNING & VERSIONING
 
 - Version source of truth: `versionCode` / `versionName` in `app/build.gradle.kts` (`0.1.0` / `1`).
-- Release signing material: `mosquetracker-release.jks` + `keystore.properties` at the repo root —
-  **both gitignored, never commit or print them**. `keystore.properties` keys: `storeFile`,
-  `storePassword`, `keyAlias`, `keyPassword`.
-- `app/build.gradle.kts` reads `keystore.properties` if present; if it is absent (fresh clone, CI) the
-  release build **falls back to debug signing** instead of failing, so `assembleRelease` always works.
+- Release signing material now lives under **`.key_store/`**: `mosquetracker-release.jks` and
+  `keystore.properties` (both gitignored). `app/build.gradle.kts` reads `.key_store/keystore.properties`
+  first, then falls back to a root-level `keystore.properties` for backward compatibility. If no
+  signing material is found (fresh clone/CI), release builds **fall back to debug signing** instead of
+  failing, so `assembleRelease` always works. **Never commit or print keys/passwords.**
+- `storeFile` in `keystore.properties` is resolved relative to that properties file's directory (so
+  `storeFile=mosquetracker-release.jks` under `.key_store/` points to `.key_store/`), making it safe to
+  relocate keys without changing passwords. `enableV1Signing = false`, `enableV2/V3/V4Signing = true`.
 - Signing scheme: `enableV1Signing = false`, `enableV2/V3/V4Signing = true` (minSdk 26 makes JAR/v1
   signing unnecessary; v3 enables key rotation).
 - Schema/version bump rule: bump `versionCode` every shipped build and `versionName` on user-visible

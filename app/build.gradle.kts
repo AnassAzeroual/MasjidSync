@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -8,13 +9,37 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
-// Release signing material lives in keystore.properties, which is gitignored. If it is absent
-// (fresh clone, CI) the release build falls back to debug signing instead of failing.
-val keystorePropertiesFile = rootProject.file("keystore.properties")
+// Release signing material lives in .key_store/keystore.properties, which is gitignored. A root-level
+// keystore.properties is still honoured for backward compatibility. If neither exists (fresh clone,
+// CI) the release build falls back to debug signing instead of failing.
+val keystorePropertiesFile = listOf(
+    rootProject.file(".key_store/keystore.properties"),
+    rootProject.file("keystore.properties"),
+).firstOrNull { it.exists() }
+
 val keystoreProperties = Properties().apply {
-    if (keystorePropertiesFile.exists()) {
+    if (keystorePropertiesFile != null) {
         keystorePropertiesFile.inputStream().use { load(it) }
     }
+}
+
+// `storeFile` is resolved relative to the properties file that declared it, so the keystore can live
+// next to keystore.properties inside .key_store/ instead of at the repo root.
+val keystoreStoreFile: File? = keystorePropertiesFile?.let { propertiesFile ->
+    keystoreProperties.getProperty("storeFile")?.let { declared ->
+        val path = File(declared)
+        if (path.isAbsolute) path else propertiesFile.parentFile.resolve(path)
+    }
+}
+
+// A properties file that points at a missing keystore is a hard misconfiguration: fail loudly rather
+// than silently producing a debug-signed "release" build.
+if (keystoreStoreFile != null && !keystoreStoreFile.exists()) {
+    throw GradleException(
+        "Release signing is configured but the keystore is missing: $keystoreStoreFile\n" +
+            "Fix `storeFile` in ${keystorePropertiesFile!!.name}, or remove that file to fall back to " +
+            "debug-signed release artifacts.",
+    )
 }
 
 android {
@@ -33,9 +58,9 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (keystoreStoreFile != null) {
             create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storeFile = keystoreStoreFile
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
@@ -60,7 +85,7 @@ android {
             )
             // Real release signing when keystore.properties is present, debug signing otherwise
             // so `assembleRelease` still works for anyone who clones the repo.
-            signingConfig = if (keystorePropertiesFile.exists()) {
+            signingConfig = if (keystoreStoreFile != null) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

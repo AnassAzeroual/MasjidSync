@@ -241,9 +241,9 @@ are local-only, and a sync layer can be added later without changing the tables.
 
 ## Versioning
 
-`versionCode 1` / `versionName 0.1.0` in `app/build.gradle.kts`. Release builds are signed from
-`mosquetracker-release.jks` via `keystore.properties` (both gitignored); when those files are absent,
-`assembleRelease` falls back to debug signing so a fresh clone still builds.
+`versionCode 1` / `versionName 0.1.0` in `app/build.gradle.kts`. Release signing lives under
+`.key_store/` (`mosquetracker-release.jks`, `keystore.properties`, both gitignored). If no signing
+material is present, `assembleRelease` falls back to debug signing so a fresh clone still builds.
 
 ---
 
