@@ -1,6 +1,7 @@
 package com.mosquetracker.app.notifications
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -51,13 +52,22 @@ class Notifier @Inject constructor(
         NotificationCompat.Builder(context, DETECTION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mosque)
             .setContentTitle(context.getString(R.string.detection_notification_title))
-            .setContentText(context.getString(R.string.detection_notification_text, mosqueCount))
+            .setContentText(
+                context.resources.getQuantityString(
+                    R.plurals.detection_notification_text,
+                    mosqueCount,
+                    mosqueCount,
+                ),
+            )
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(openAppIntent())
             .build()
 
+    // Lint cannot see through the canPostNotifications() guard, but every notify() call
+    // below is gated by an explicit POST_NOTIFICATIONS check before it runs.
+    @SuppressLint("MissingPermission")
     fun updateForeground(mosqueCount: Int) {
         if (!canPostNotifications()) return
         runCatching { manager.notify(FOREGROUND_ID, foregroundNotification(mosqueCount)) }
@@ -74,6 +84,7 @@ class Notifier @Inject constructor(
         notify(title = "Left $mosqueName", text = "Visit closed in your log.")
     }
 
+    @SuppressLint("MissingPermission")
     private fun notify(title: String, text: String) {
         if (!canPostNotifications()) return
         val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL_ID)

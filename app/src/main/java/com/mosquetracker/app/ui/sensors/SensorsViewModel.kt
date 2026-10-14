@@ -107,7 +107,6 @@ class SensorsViewModel @Inject constructor(
 
     override fun onCleared() {
         stopBleScan()
-        super.onCleared()
     }
 
     private companion object {

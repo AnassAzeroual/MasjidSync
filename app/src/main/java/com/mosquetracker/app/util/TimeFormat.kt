@@ -10,14 +10,14 @@ import java.util.Locale
 object TimeFormat {
 
     private val zone: ZoneId get() = ZoneId.systemDefault()
-    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
-    private val dateFormatter = DateTimeFormatter.ofPattern("EEE, d MMM yyyy", Locale.getDefault())
 
     fun time(epochMillis: Long): String =
-        Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalTime().format(timeFormatter)
+        Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalTime()
+            .format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
 
     fun date(epochMillis: Long): String =
-        Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate().format(dateFormatter)
+        Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
+            .format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy", Locale.getDefault()))
 
     fun dateTime(epochMillis: Long): String = "${date(epochMillis)} · ${time(epochMillis)}"
 

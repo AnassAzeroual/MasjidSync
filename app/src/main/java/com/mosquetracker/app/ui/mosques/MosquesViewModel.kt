@@ -111,7 +111,6 @@ class MosquesViewModel @Inject constructor(
 
     override fun onCleared() {
         beaconScanJob?.cancel()
-        super.onCleared()
     }
 
     private companion object {

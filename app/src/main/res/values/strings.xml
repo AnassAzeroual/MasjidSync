@@ -8,5 +8,8 @@
     <string name="channel_events_desc">Notifies you when you enter or leave a mosque.</string>
 
     <string name="detection_notification_title">Mosque detection active</string>
-    <string name="detection_notification_text">Watching %1$d saved location(s) in the background.</string>
+    <plurals name="detection_notification_text">
+        <item quantity="one">Watching %1$d saved location in the background.</item>
+        <item quantity="other">Watching %1$d saved locations in the background.</item>
+    </plurals>
 </resources>

@@ -148,12 +148,20 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 .\gradlew.bat :app:assembleDebug        # debug APK
 .\gradlew.bat :app:testDebugUnitTest    # unit tests
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking
+.\gradlew.bat :app:lintDebug            # Android Lint (exits 0)
 ```
 
 Install the debug build on a connected device/emulator:
 
 ```powershell
 adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+Or run the whole smoke test (build → install → launch → crash-watch logcat → screenshot →
+checklist) with:
+
+```powershell
+.\tools\verify-on-device.ps1
 ```
 
 `local.properties` (gitignored) must point at your SDK:
@@ -219,5 +227,15 @@ are local-only, and a sync layer can be added later without changing the tables.
 
 ## Versioning
 
-`versionCode 1` / `versionName 0.1.0`. Release builds currently use the default debug-less signing
-config; wire up a real keystore before distributing (`*.jks` / `keystore.properties` are gitignored).
+`versionCode 1` / `versionName 0.1.0` in `app/build.gradle.kts`. Release builds are signed from
+`mosquetracker-release.jks` via `keystore.properties` (both gitignored); when those files are absent,
+`assembleRelease` falls back to debug signing so a fresh clone still builds.
+
+---
+
+## Docs & tooling
+
+- `AGENTS.md` — standing rules for agents working in this repo.
+- `AI Agent Help context project.md` — the living master context (architecture, quirks, signing,
+  environment, device-verification status). **Keep it up to date with every change.**
+- `tools/verify-on-device.ps1` — build → install → launch → crash-watch → screenshot → checklist.

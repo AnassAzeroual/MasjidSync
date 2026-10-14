@@ -1,5 +1,6 @@
 package com.mosquetracker.app.service
 
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -36,6 +37,9 @@ class DetectionForegroundService : Service() {
         notifier.ensureChannels()
     }
 
+    // FOREGROUND_SERVICE_TYPE_LOCATION is inlined from API 29; ServiceCompat.startForeground
+    // swallows the type on API < 29, so this is safe on our minSdk 26.
+    @SuppressLint("InlinedApi")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ServiceCompat.startForeground(
             this,
