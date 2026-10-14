@@ -16,5 +16,8 @@ local.properties
 keystore.properties
 .key_store/
 
+# Release R8 mapping / native symbol output emitted next to the module
+/app/release/
+
 # Local verification output (screenshots, logcat dumps)
 /artifacts/

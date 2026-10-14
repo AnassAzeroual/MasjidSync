@@ -41,6 +41,7 @@ import com.mosquetracker.app.R
 import com.mosquetracker.app.model.DetectionOutcome
 import com.mosquetracker.app.ui.addmosque.AddMosqueDialog
 import com.mosquetracker.app.ui.common.AppIcons
+import com.mosquetracker.app.ui.common.FabContentPadding
 import com.mosquetracker.app.ui.common.KeyValueRow
 import com.mosquetracker.app.ui.common.RequiredPermissions
 import com.mosquetracker.app.ui.common.ScreenScaffold
@@ -82,7 +83,9 @@ fun DashboardScreen(
                 .fillMaxSize()
                 .padding(contentPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                // Bottom padding clears the "Add mosque" FAB so it never floats over the last
+                // cards — notably the Summary card when no outcome has been produced yet.
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = FabContentPadding),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (!foregroundGranted) {

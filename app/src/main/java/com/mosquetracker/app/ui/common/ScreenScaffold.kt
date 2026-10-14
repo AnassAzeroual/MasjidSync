@@ -10,6 +10,16 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+
+/**
+ * Extra bottom padding for the scrollable content of a screen that shows a floating action
+ * button. [Scaffold] draws the FAB on top of the body rather than insetting it, so screens with
+ * a FAB must reserve this space themselves — otherwise the FAB floats over their last cards.
+ *
+ * Sized to clear a 56dp FAB (extended and regular) plus a comfortable gap.
+ */
+val FabContentPadding = 88.dp
 
 /**
  * Inner scaffold for a tab: the outer [com.mosquetracker.app.ui.MainScreen] already

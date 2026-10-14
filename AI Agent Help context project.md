@@ -141,6 +141,11 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     (which hardcodes `#0F766E`), so `@color/ic_launcher_background` was removed as unused.
 11. Only two lint warnings remain, both informational version-currency notices
     (`AndroidGradlePluginVersion`, `NewerVersionAvailable`). Leave them unless deliberately upgrading.
+12. **Screens that show a FAB must reserve their own bottom padding.** Material 3's `Scaffold`
+    draws `floatingActionButton` *over* the body rather than insetting it, so the Dashboard and
+    Mosques screens end their scrolling content with `FabContentPadding` (88dp, defined in
+    `ui/common/ScreenScaffold.kt`). Without it the "Add mosque" FAB floated over the Dashboard's
+    last card — the **Summary** card.
 
 ---
 

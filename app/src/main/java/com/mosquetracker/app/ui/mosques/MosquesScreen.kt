@@ -2,6 +2,7 @@ package com.mosquetracker.app.ui.mosques
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +40,7 @@ import com.mosquetracker.app.model.BleBeacon
 import com.mosquetracker.app.ui.addmosque.AddMosqueDialog
 import com.mosquetracker.app.ui.common.AppIcons
 import com.mosquetracker.app.ui.common.EmptyState
+import com.mosquetracker.app.ui.common.FabContentPadding
 import com.mosquetracker.app.ui.common.ScreenScaffold
 import com.mosquetracker.app.ui.common.SectionCard
 import kotlinx.coroutines.delay
@@ -79,7 +81,12 @@ fun MosquesScreen(
                 .fillMaxSize()
                 .padding(contentPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 16.dp,
+                end = 16.dp,
+                bottom = FabContentPadding,
+            ),
         ) {
             message?.let { text ->
                 item {
