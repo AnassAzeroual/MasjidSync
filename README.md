@@ -170,6 +170,20 @@ checklist) with:
 sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
 ```
 
+### Emulator on Windows *N* editions
+
+Windows *N* editions ship without Media Foundation (`MFPlat.dll`), which both `emulator.exe` and its
+qemu backend import at load time — so the emulator dies with `0xC0000135` and Android Studio reports
+*"The emulator process for AVD … has terminated."* This machine hit exactly that. If it happens to you:
+
+```powershell
+.\tools\diagnose-emulator.ps1              # report + verdict
+.\tools\fix-emulator-mediafoundation.ps1   # local, reversible workaround (no admin)
+```
+
+Full explanation in `AI Agent Help context project.md` §8. Re-run the fix script after every Android
+Emulator SDK update.
+
 ---
 
 ## Permissions
@@ -239,3 +253,5 @@ are local-only, and a sync layer can be added later without changing the tables.
 - `AI Agent Help context project.md` — the living master context (architecture, quirks, signing,
   environment, device-verification status). **Keep it up to date with every change.**
 - `tools/verify-on-device.ps1` — build → install → launch → crash-watch → screenshot → checklist.
+- `tools/diagnose-emulator.ps1` — why the emulator won't start (edition, Media Foundation, functional test).
+- `tools/fix-emulator-mediafoundation.ps1` — local, reversible fix for Windows *N* editions (`-Undo` reverts).
