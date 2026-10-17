@@ -197,6 +197,41 @@ data class RoutineSnapshot(
             autoRotate,
         ).any { it != UNSET }
 
+    /**
+     * Fills in the fields we never managed to capture, from [fresh] — a capture read from the live
+     * state a moment ago. Only [UNSET] fields are touched, and unset only ever means the action was
+     * armed while Android had not granted the access it needs, so nothing was written and the value
+     * read now is still the true pre-arrival one.
+     *
+     * Without this, granting Do Not Disturb or "Modify system settings" after the first arrival
+     * would leave those fields unset for good: the routine would silence, dim and lock the rotation
+     * on every later arrival but never put any of it back.
+     *
+     * @param skipSystemVolume leaves the system stream alone when a ring-mode action is what muted
+     *  the streams. The ring mode puts those back itself, and reading the already-zeroed value in
+     *  would leave the user's touch sounds muted after exit.
+     */
+    fun fillGaps(fresh: RoutineSnapshot, skipSystemVolume: Boolean): RoutineSnapshot {
+        fun fill(stored: Int, live: Int): Int = if (stored == UNSET) live else stored
+        return copy(
+            ringerMode = fill(ringerMode, fresh.ringerMode),
+            musicVolume = fill(musicVolume, fresh.musicVolume),
+            alarmVolume = fill(alarmVolume, fresh.alarmVolume),
+            notificationVolume = fill(notificationVolume, fresh.notificationVolume),
+            systemVolume = if (skipSystemVolume) {
+                systemVolume
+            } else {
+                fill(systemVolume, fresh.systemVolume)
+            },
+            dndFilter = fill(dndFilter, fresh.dndFilter),
+            brightness = fill(brightness, fresh.brightness),
+            brightnessMode = fill(brightnessMode, fresh.brightnessMode),
+            screenTimeout = fill(screenTimeout, fresh.screenTimeout),
+            autoRotate = fill(autoRotate, fresh.autoRotate),
+            flashlight = flashlight || fresh.flashlight,
+        )
+    }
+
     fun toJson(): String = JSONObject().apply {
         put(KEY_ACTIONS, actions.joinToString(","))
         put(KEY_RINGER, ringerMode)

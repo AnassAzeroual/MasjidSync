@@ -61,6 +61,11 @@ Actions Android reserves for the system are listed in `RoutineAction.BLOCKED_ACT
 Settings so the full menu is visible with the reason: Wi-Fi/Bluetooth toggling, battery saver, mobile
 data, airplane mode, locking the screen now, and restricting background data.
 
+The card also guards the easiest mistake in the whole app: muting every stream while leaving the
+ringer alone, which produces a phone that still rings inside the mosque. When no ringer action is
+armed but sound actions are, it says *"No ringer action is armed, so calls can still ring"* with a
+**Set silent** button.
+
 ---
 
 ## Detection pipeline

@@ -219,11 +219,16 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     action is one enum entry plus one application site in `RoutineEngine`; the Settings editor, the
     "N of 14 armed" counter, the access hints and the blocked list all derive from the catalogue.
     Fresh-install defaults are in `RoutineAction.DEFAULT_ENABLED`, never in `SettingsStore`.
-19. **The routine snapshot is captured once, restored per-part.** `RoutineEngine.apply` reuses an
-    existing `routine_snapshot` so a repeated ENTER cannot overwrite the true pre-arrival values,
-    and `revert` only puts back the parts the enabled on-exit actions cover — what is left stays in
-    the snapshot (and Settings keeps offering *Restore now*). Fields are `UNSET = -1` when not
-    captured, so `restoreVolume`/`restoreDndFilter` no-op instead of writing a value we never set.
+19. **The routine snapshot is captured once, restored per-part, and completed later.** `RoutineEngine.apply`
+    reuses an existing `routine_snapshot` so a repeated ENTER cannot overwrite the true pre-arrival
+    values, and `revert` only puts back the parts the enabled on-exit actions cover — what is left
+    stays in the snapshot (and Settings keeps offering *Restore now*). Fields are `UNSET = -1` when
+    not captured, so `restoreVolume`/`restoreDndFilter` no-op instead of writing a value we never
+    set. Every apply then calls `RoutineSnapshot.fillGaps`, which fills still-unset fields from a
+    fresh capture: unset only ever means the action was armed while its access was missing, so the
+    live value is still the original one. Without it, granting DND or WRITE_SETTINGS *after* the
+    first arrival would leave those fields unset for good — the routine would silence/dim/lock on
+    every later arrival and never put any of it back.
 20. **The ring mode is the last audio write and is re-asserted** (`setRingModeAndSettle`).
     `STREAM_SYSTEM` is one of the streams the ring mode governs on this build
     (`dumpsys audio` → `ringer mode affected streams = 0x1a6` includes `STREAM_SYSTEM`), so muting
@@ -286,6 +291,16 @@ Static APK verification (no device needed):
   `Medium_Phone` and `Small_Phone`; a cold boot completed in ~38.7 s; `app-debug.apk` installed and
   `com.mosquetracker.app.debug/com.mosquetracker.app.MainActivity` became `topResumedActivity` with no
   crash. Evidence: `artifacts/emulator-dashboard.png` (gitignored).
+- **Status (2026-10-17, real device):** Samsung **SM-S938B (Galaxy S25 Ultra), Android 17 / SDK 37**,
+  debug build. The exit restore was observed working end to end there: entry muted media/alarm/
+  notification/system, exit put media and alarm back to their captured values and cleared
+  `routine_snapshot`. The emulator's `STREAM_SYSTEM` quirk does **not** reproduce on this build —
+  `ringer mode affected streams = 0x126` (a different set from the emulator's `0x1a6`, but it still
+  includes `STREAM_SYSTEM`), yet writing that stream lands on NORMAL rather than VIBRATE, and
+  `set-ringer-mode SILENT` sticks — so the skip in §5.20 is harmless there and the ring mode is the
+  real lever. Access to check when a user reports "nothing happens": Do Not Disturb access (ring
+  mode + DND actions) and "Modify system settings" (the display rows), plus the *Run the routine on
+  arrival* master switch. `adb shell cmd notification allow_dnd <pkg>` grants the first for testing.
 - **Status (2026-10-17, editable routine):** `RingerController` was replaced by `routine/RoutineEngine.kt`
   plus the `model/RoutineAction.kt` catalogue; the Settings "My Routine" card is now an editor with
   one switch per action. Verified on `emulator-5554` with `adb emu geo fix`:

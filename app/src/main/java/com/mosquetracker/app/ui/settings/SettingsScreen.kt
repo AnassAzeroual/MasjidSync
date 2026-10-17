@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.detection.DetectionPipeline
+import com.mosquetracker.app.model.ActionGroup
 import com.mosquetracker.app.model.ActionRequirement
 import com.mosquetracker.app.model.AlertMode
 import com.mosquetracker.app.model.BLOCKED_ACTIONS
@@ -138,6 +139,7 @@ fun SettingsScreen(
                 onRestoreNow = viewModel::restoreNow,
                 onGrantDnd = { context.openNotificationPolicySettings() },
                 onGrantWriteSettings = { context.openWriteSettings() },
+                onSetSilent = { viewModel.setRoutineAction(RoutineAction.SILENT_RINGER, true) },
             )
 
             Text("Location & Geofencing", style = MaterialTheme.typography.titleLarge)
@@ -261,6 +263,7 @@ private fun RoutineCard(
     onRestoreNow: () -> Unit,
     onGrantDnd: () -> Unit,
     onGrantWriteSettings: () -> Unit,
+    onSetSilent: () -> Unit,
 ) {
     val tracked = mosques.filter { it.trackingEnabled }
     val armed = monitoringEnabled && routineEnabled
@@ -271,6 +274,10 @@ private fun RoutineCard(
         arrival.any { it in actions && it.requirement == ActionRequirement.DND_ACCESS }
     val writeMissing = !access.writeSettings &&
         arrival.any { it in actions && it.requirement == ActionRequirement.WRITE_SETTINGS }
+    // Muting the streams while leaving the ringer alone is the classic way to end up with a phone
+    // that still rings inside the mosque: every volume row looks armed, but nothing silences calls.
+    val ringerUntouched = RoutineAction.RINGER_ACTIONS.none { it in actions } &&
+        arrival.any { it.group == ActionGroup.SOUND && it in actions }
 
     SectionCard {
         Text("If", style = MaterialTheme.typography.titleMedium)
@@ -355,6 +362,13 @@ private fun RoutineCard(
                 text = "Some armed actions need \"Modify system settings\".",
                 buttonText = "Grant",
                 onClick = onGrantWriteSettings,
+            )
+        }
+        if (ringerUntouched) {
+            AccessHint(
+                text = "No ringer action is armed, so calls can still ring.",
+                buttonText = "Set silent",
+                onClick = onSetSilent,
             )
         }
 

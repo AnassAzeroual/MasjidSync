@@ -67,7 +67,13 @@ class RoutineEngine @Inject constructor(
         if (wanted.isEmpty()) return false
 
         val existing = settingsStore.readRoutineSnapshot()
-        val snapshot = existing ?: captureSnapshot(wanted)
+        val fresh = captureSnapshot(wanted)
+        // A later arrival — or an access grant since the last one — can capture what the first
+        // attempt could not, so the snapshot never stays permanently incomplete.
+        val snapshot = existing?.fillGaps(
+            fresh = fresh,
+            skipSystemVolume = existing.actions.any(RoutineAction.RINGER_ACTION_NAMES::contains),
+        ) ?: fresh
         settingsStore.writeRoutineSnapshot(snapshot.copy(actions = wanted.mapTo(mutableSetOf()) { it.name }))
 
         val changed = applyOnArrival(wanted)

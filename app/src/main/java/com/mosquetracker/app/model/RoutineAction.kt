@@ -25,7 +25,7 @@ enum class RoutineAction(
 
     SILENT_RINGER(
         label = "Silent ringer",
-        description = "Ring mode goes to silent",
+        description = "Nothing rings and nothing buzzes — the phone goes completely quiet",
         phase = ActionPhase.ON_ARRIVAL,
         group = ActionGroup.SOUND,
         requirement = ActionRequirement.DND_ACCESS,
@@ -33,7 +33,7 @@ enum class RoutineAction(
     ),
     VIBRATE_RINGER(
         label = "Vibrate instead",
-        description = "Ring mode goes to vibrate (silent wins if both are on)",
+        description = "Calls and alerts buzz instead of ringing. If \"Silent ringer\" is on too, silent wins",
         phase = ActionPhase.ON_ARRIVAL,
         group = ActionGroup.SOUND,
         requirement = ActionRequirement.DND_ACCESS,
@@ -49,7 +49,7 @@ enum class RoutineAction(
     ),
     MUTE_ALARM(
         label = "Mute alarm volume",
-        description = "Alarm stream to zero",
+        description = "Alarm volume to its minimum — Android never lets an alarm go fully silent",
         phase = ActionPhase.ON_ARRIVAL,
         group = ActionGroup.SOUND,
         requirement = ActionRequirement.NONE,
@@ -122,8 +122,8 @@ enum class RoutineAction(
         defaultEnabled = false,
     ),
     LOCK_ROTATION(
-        label = "Lock rotation off",
-        description = "Auto-rotate stays off while you are inside",
+        label = "Lock the rotation",
+        description = "Auto-rotate switches off while you are inside",
         phase = ActionPhase.ON_ARRIVAL,
         group = ActionGroup.DEVICE,
         requirement = ActionRequirement.WRITE_SETTINGS,
@@ -182,6 +182,9 @@ enum class RoutineAction(
 
         /** Which on-arrival actions fight over the ring mode. Silent wins. */
         val RINGER_ACTIONS: Set<RoutineAction> = setOf(SILENT_RINGER, VIBRATE_RINGER)
+
+        /** [RINGER_ACTIONS] by name, for reading a stored snapshot's action list. */
+        val RINGER_ACTION_NAMES: Set<String> = RINGER_ACTIONS.mapTo(mutableSetOf()) { it.name }
 
         val DND_ACTIONS: Set<RoutineAction> = setOf(DND_TOTAL_SILENCE, DND_ALARMS_ONLY)
 
