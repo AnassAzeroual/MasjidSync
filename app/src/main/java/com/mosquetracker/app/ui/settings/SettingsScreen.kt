@@ -226,12 +226,16 @@ fun SettingsScreen(
                     checked = autoSilent,
                     onCheckedChange = viewModel::setAutoSilent,
                 )
-                if (!access.dnd) {
+                // Only offer a grant when an armed action actually wants it, so the card never
+                // asks for access the routine has no use for.
+                if (!access.dnd && routineActions.any { it.requirement == ActionRequirement.DND_ACCESS }) {
                     TextButton(onClick = { context.openNotificationPolicySettings() }) {
                         Text("Grant Do Not Disturb access")
                     }
                 }
-                if (!access.writeSettings) {
+                if (!access.writeSettings &&
+                    routineActions.any { it.requirement == ActionRequirement.WRITE_SETTINGS }
+                ) {
                     TextButton(onClick = { context.openWriteSettings() }) {
                         Text("Grant \"Modify system settings\"")
                     }
