@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,9 +31,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,6 +85,21 @@ fun SettingsScreen(
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
 
+    // The mosque whose name is being edited; zones are auto-named on the map, so this is where
+    // the real name is given.
+    var renamingMosqueId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val renamingMosque = mosques.firstOrNull { it.id == renamingMosqueId }
+    if (renamingMosque != null) {
+        RenameMosqueDialog(
+            mosque = renamingMosque,
+            onDismiss = { renamingMosqueId = null },
+            onRename = { name ->
+                viewModel.renameMosque(renamingMosque, name)
+                renamingMosqueId = null
+            },
+        )
+    }
+
     fun submitSearch() {
         viewModel.searchPlace(searchQuery, onFound = {
             searchQuery = ""
@@ -129,6 +147,7 @@ fun SettingsScreen(
                             mosque = mosque,
                             onToggle = { viewModel.setTracking(mosque, it) },
                             onModeToggle = { viewModel.toggleAlertMode(mosque) },
+                            onRename = { renamingMosqueId = mosque.id },
                             onDelete = { viewModel.deleteMosque(mosque) },
                         )
                     }
@@ -525,6 +544,7 @@ private fun TrackingRow(
     mosque: MosqueEntity,
     onToggle: (Boolean) -> Unit,
     onModeToggle: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -545,6 +565,9 @@ private fun TrackingRow(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            IconButton(onClick = onRename) {
+                Icon(AppIcons.Edit, contentDescription = "Rename ${mosque.name}")
             }
             IconButton(onClick = onDelete) {
                 Icon(AppIcons.Delete, contentDescription = "Delete ${mosque.name}")
@@ -569,6 +592,40 @@ private fun TrackingRow(
             )
         }
     }
+}
+
+/** Gives a mosque its real name; the map numbers new zones instead of asking for one. */
+@Composable
+private fun RenameMosqueDialog(
+    mosque: MosqueEntity,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+) {
+    var name by rememberSaveable(mosque.id) { mutableStateOf(mosque.name) }
+    val focusManager: FocusManager = LocalFocusManager.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename mosque") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(name) },
+                enabled = name.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

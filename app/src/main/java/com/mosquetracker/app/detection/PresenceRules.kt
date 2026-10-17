@@ -20,8 +20,15 @@ object PresenceRules {
     /** Clock skew tolerated between the fix's time and ours before a "future" fix is distrusted. */
     private const val MAX_CLOCK_SKEW_MILLIS = 30_000L
 
-    /** How long the watch must keep seeing the phone clearly outside before the visit ends. */
+    /** How long a departure past the release margin has to hold before the visit ends. */
     const val EXIT_DWELL_MILLIS = 20_000L
+
+    /**
+     * How long merely outside the drawn circle has to hold before the visit ends anyway. A phone
+     * parked on the rim never reaches the release margin, so without this it would stay muted for
+     * as long as its readings stayed ambiguous; a minute of the same answer is evidence enough.
+     */
+    const val OUTSIDE_CIRCLE_EXIT_MILLIS = 60_000L
 
     /** True when [fix] is recent and precise enough to decide a visit with. */
     fun isUsable(fix: LocationSample, nowMillis: Long): Boolean {
@@ -32,8 +39,9 @@ object PresenceRules {
 
     /**
      * Distance past which a fix counts as clearly outside: the drawn circle plus the release
-     * margin, widened to the fix's own error when that is the larger of the two. A reading that
-     * could still plausibly be inside the circle never ends a visit.
+     * margin, widened to the fix's own error when that is the larger of the two. Only a reading
+     * this far out ends a visit on the short dwell; a closer one has to hold for
+     * [OUTSIDE_CIRCLE_EXIT_MILLIS] instead.
      */
     fun releaseDistanceMeters(configuredRadiusMeters: Int, accuracyMeters: Float): Double =
         DetectionPipeline.zoneRadiusMeters(configuredRadiusMeters) +
@@ -48,7 +56,24 @@ object PresenceRules {
     fun fenceExitConfirmed(distanceMeters: Double?, configuredRadiusMeters: Int): Boolean =
         distanceMeters == null || !DetectionPipeline.isInsideZone(distanceMeters, configuredRadiusMeters)
 
-    /** True once a departure first seen at [outsideSinceMillis] has lasted the exit dwell. */
-    fun dwellElapsed(outsideSinceMillis: Long, nowMillis: Long): Boolean =
-        nowMillis - outsideSinceMillis >= EXIT_DWELL_MILLIS
+    /**
+     * Whether a departure has held long enough to end the visit.
+     *
+     * [outsideForMillis] is how long usable fixes have kept the phone outside the drawn circle, or
+     * null when it has not been seen outside. A fix past the release margin only has to hold for
+     * [EXIT_DWELL_MILLIS]; anything less clear has to hold for [OUTSIDE_CIRCLE_EXIT_MILLIS], so
+     * the wait is as short as the reading is convincing. A fix inside the circle is never a
+     * departure, however long the clock has been running.
+     */
+    fun departureConfirmed(
+        distanceMeters: Double,
+        configuredRadiusMeters: Int,
+        accuracyMeters: Float,
+        outsideForMillis: Long?,
+    ): Boolean {
+        if (outsideForMillis == null) return false
+        if (DetectionPipeline.isInsideZone(distanceMeters, configuredRadiusMeters)) return false
+        val clear = distanceMeters > releaseDistanceMeters(configuredRadiusMeters, accuracyMeters)
+        return outsideForMillis >= if (clear) EXIT_DWELL_MILLIS else OUTSIDE_CIRCLE_EXIT_MILLIS
+    }
 }

@@ -127,6 +127,19 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { monitoringController.deleteMosque(mosque) }
     }
 
+    /**
+     * Renames a mosque. Zones are auto-named ("Mosque 1", …) on the map, so this is where the
+     * real name is given. The name is display-only — the geofence keys off the id, so no
+     * re-registration is needed. A blank name is ignored.
+     */
+    fun renameMosque(mosque: MosqueEntity, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || trimmed == mosque.name) return
+        viewModelScope.launch {
+            mosqueRepository.update(mosque.copy(name = trimmed))
+        }
+    }
+
     fun setMonitoring(enabled: Boolean) {
         viewModelScope.launch {
             if (enabled) monitoringController.enableMonitoring() else monitoringController.disableMonitoring()

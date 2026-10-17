@@ -20,9 +20,11 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
   or got wrong is still caught. Its pace adapts to how far away you are: every 10 s near a circle's
   edge, 20 s inside a visit, 60 s within 2 km, and 3 min on low-power Wi-Fi/cell farther away.
 - Weak readings are ignored: a fix only counts when it is accurate to 100 m and under 2 minutes old.
-- Leaving is debounced. The phone must be clearly outside (25 m past the circle, or past the fix's
-  own error if that is larger) for 20 seconds before the visit closes, so one stray reading cannot
-  un-mute you mid-prayer. A geofence `EXIT` that a fresh fix confirms closes the visit at once.
+- Leaving is debounced. A fix clearly outside (25 m past the circle, or past the fix's own error if
+  that is larger) closes the visit after **20 seconds**; one that never got clear of the circle — a
+  phone parked on the rim, which is what the map shows — closes it after **a full minute** outside.
+  Either way one stray reading cannot un-mute you mid-prayer. A geofence `EXIT` that a fresh fix
+  confirms closes the visit at once.
 - Detection keeps running in the background through a foreground service. It restarts after a
   reboot or app update, a 15-minute worker re-arms the geofences, and a **Quick Settings tile** turns
   detection on and off without opening the app.
@@ -46,7 +48,7 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 
 **Map (Home)**
 - **Streets** (OpenStreetMap) or **Satellite** (Esri World Imagery) basemaps, with the choice
-  remembered and the credit shown on the map.
+  remembered and the credit kept as a tiny corner label.
 - A blue **you-are-here** dot, with an accuracy halo when the fix is loose. The camera follows you
   until you pan; there are *show all mosques* and *centre on me* buttons.
 - The zone that contains you is drawn **red**, using the same rule as the arrival check.
@@ -54,8 +56,13 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
   confirm*, *detection off* or *Leaving zone* while the app has not acted yet.
 - One status banner at a time: a missing location grant, detection off while you are inside, Do Not
   Disturb access needed, or notifications blocked.
-- **Save Current Position as Mosque**, or touch-and-hold anywhere to drop a pin. The editor sheet
-  sets the name and a 20–100 m radius, then *Save & Activate*.
+- The gold round **+** button at the bottom right saves wherever you are standing as a mosque;
+  touch-and-hold anywhere drops a pin instead. The editor sheet
+  sizes the circle from 20–100 m, then *Save & Activate*. New zones are numbered — *Mosque 1*,
+  *Mosque 2*, … — so drawing one is a single step.
+- **Hold the radius slider and the sheet fades away** — the card drops to 5% opacity and only the
+  slider stays, at 50% — so you watch the circle on the map grow and shrink instead of guessing
+  behind a panel. Everything returns the moment you let go.
 - **Press and hold a saved pin to drag it.** A live chip shows the distance and whether you are
   inside, and dragging a zone onto or off yourself runs a real arrival or departure, so you can test
   without walking.
@@ -64,6 +71,8 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 - *Search via Map* finds a place by name with the platform Geocoder; the camera flies there. It is
   disabled offline.
 - *Use Current Location* drops the new mosque on your fix.
+- Each saved mosque has a **rename** button. The map numbers new zones instead of asking for a
+  name, so this is where the real name is given.
 
 **History**
 - Stats: total visits, this week, day streak, and a count per mosque.
@@ -99,10 +108,10 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 
 | # | Screen | Where | Purpose |
 |---|--------|-------|---------|
-| 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, a presence pill (*Outside Zone*, *Inside Zone* once the visit is logged, or *confirming…* / *GPS too weak to confirm* / *detection off* / *Leaving zone* while the app has not acted yet), one status banner at a time (missing location grant, detection off while inside, Do Not Disturb access needed, notifications), gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. The app bar switches the basemap between **Streets** and **Satellite**. |
+| 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, a presence pill (*Outside Zone*, *Inside Zone* once the visit is logged, or *confirming…* / *GPS too weak to confirm* / *detection off* / *Leaving zone* while the app has not acted yet), one status banner at a time (missing location grant, detection off while inside, Do Not Disturb access needed, notifications), a gold round **+** button at the bottom right, and the zone picker with its editor sheet (20–100 m radius slider + Save & Activate; new zones are numbered, not named). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. Nothing on the map carries a name — pins, the details card and the drag read-out are nameless; the real name lives in Settings. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API, Moroccan method, when online; cached day or Muslim World League solar math offline; rolls over at midnight) with next-prayer countdown (tomorrow's Fajr after Isha), and the prayer silence buffer toggle. |
-| 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
+| 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs — plus per-mosque tracking toggles + arrival mode (full silent / notify only) + rename, "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
 
 Bottom navigation (`ui/MainScreen.kt`) switches between the four tabs. The map's app bar has
 *map style*, *show all mosques* and *centre on my location* actions; the camera follows your fix
@@ -116,13 +125,14 @@ opening the app.
 The app bar's layers button switches the basemap, and the choice is remembered. Both layers are
 keyless, so nothing here is billed and nothing needs an account:
 
-| Layer | Tiles | Credit shown under the map |
+| Layer | Tiles | Credit (tiny, bottom-left corner) |
 |-------|-------|----------------------------|
 | **Streets** (default) | OpenStreetMap standard, the one osmdroid ships with | © OpenStreetMap contributors |
 | **Satellite** | Esri World Imagery (`model/MapLayer.kt` builds the `{z}/{y}/{x}` URL by hand — osmdroid's own sources all emit `{z}/{x}/{y}`) | Imagery © Esri, Maxar, Earthstar Geographics |
 
-Both providers hand out tiles on condition that the credit stays visible, so it is drawn on the map
-itself rather than buried in Settings. Switching styles changes only the tiles: pins, zone circles
+Both providers hand out tiles on condition that the credit stays visible, so it stays on the map —
+as a small corner label with a faint shadow (the way other map apps do it) rather than a pill or a
+Settings page. Switching styles changes only the tiles: pins, zone circles
 and the picker are overlays, so they look identical on either, and each source caches under its own
 name so the two never mix.
 
@@ -309,17 +319,20 @@ is the reading that records it. Fence events, which carry no fix, are checked ag
 reading and then against one requested freshly.
 
 Only **usable** fixes decide a visit (`detection/PresenceRules.kt`): accuracy ≤ 100 m and no older
-than 2 minutes. The watch releases an open visit only once the fix is clearly outside — 25 m past the
-circle, or past the fix's own error when that is larger — and only after the phone has stayed out
-for **20 seconds**, so one stray reading cannot un-mute the phone mid-prayer. A fence `EXIT` is
+than 2 minutes. The watch releases an open visit only once a departure has *held*: a fix clearly
+outside — 25 m past the circle, or past the fix's own error when that is larger — needs **20
+seconds**, while one that never got clear of the drawn circle needs **a full minute** of the same
+answer, so a phone parked on the rim is not muted forever just because its readings stay ambiguous.
+The clock runs from the circle the map draws, and a single fix back inside it restarts it, so one
+stray reading cannot un-mute the phone mid-prayer. A fence `EXIT` is
 re-checked against a freshly requested fix: only a usable fix that puts the phone back inside
 overrules it (no fix → the exit stands, because a phone stuck on silent is worse than a visit logged
 a little short). Pin moves stay immediate. Standing right on the rim is the honest edge case — the
-paint may flicker red/grey while the routine holds. A fix or fence event still in flight when
-detection is switched off opens nothing.
+paint may flicker red/grey while the routine holds, for at most that minute. A fix or fence event
+still in flight when detection is switched off opens nothing.
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest   # 102 tests: ZoneBoundaryTest, PresenceRulesTest, RoutinePlannerTest, WatchCadenceTest, GeofenceSelectionTest, ZonePresenceTest, DetectionSummaryTest, NextPrayerTest, CsvTest, ...
+.\gradlew.bat :app:testDebugUnitTest   # 112 tests: ZoneBoundaryTest, PresenceRulesTest, RoutinePlannerTest, WatchCadenceTest, GeofenceSelectionTest, ZonePresenceTest, DetectionSummaryTest, NextPrayerTest, CsvTest, MosqueAutoNameTest, ...
 .\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor"                 # emulator: real positions vs the drawn circle
 .\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor" -WatchArrival   # ... and a real geofence-driven arrival
 ```
@@ -374,7 +387,7 @@ app/src/main/java/com/mosquetracker/app/
 ├── detection/
 │   ├── DetectionPipeline.kt   # GPS distance check against the drawn circle
 │   ├── PresenceEngine.kt      # serialized enter/exit decisions → visit rows + routine
-│   ├── PresenceRules.kt       # usable-fix, release-distance, fence-exit and dwell rules
+│   ├── PresenceRules.kt       # usable-fix, release-distance, fence-exit and departure-dwell rules
 │   ├── ZoneWatch.kt           # software watch over live fixes; returns the next WatchCadence
 │   ├── WatchCadence.kt        # background watch pace from the distance to the nearest circle
 │   ├── GeofenceManager.kt     # replaces OS geofences (tracked, nearest 100) and reports FenceStatus

@@ -34,11 +34,12 @@ Snapshot at time of writing:
 - SDK: `minSdk 26`, `compileSdk 37`, `targetSdk 37`
 - Toolchain: AGP **9.4.1**, Gradle **9.6.0**, Kotlin (built-in via AGP) **2.2.10**, KSP **2.3.12**,
   Compose BOM **2026.09.00**
-- Status: debug + release builds green, 102 unit tests pass, `lintDebug` exits 0
+- Status: debug + release builds green, 112 unit tests pass, `lintDebug` exits 0
   (warnings only: version-currency + three pre-existing `ClickableViewAccessibility` in `HomeScreen`).
 - Branch **`fix/presence-routine-robustness`** (uncommitted, awaiting review):
   - Phase 1 — presence/routine rewrite: `PresenceEngine` + `RoutineCoordinator`/`RoutinePlanner`,
-    vibrate fallback without DND, usable-fix rules + 20 s exit dwell, fence-exit re-check,
+    vibrate fallback without DND, usable-fix rules + exit dwell (20 s clearly outside, 1 min outside
+    the circle — §5.32), fence-exit re-check,
     monitoring-off closes visits (§5.27).
   - Phase 2 — the foreground service hosts an adaptive background watch (`WatchCadence`), guarded
     service starts, `ensureRunning` on app start, fences replaced (remove-then-add, nearest 100,
@@ -65,7 +66,8 @@ Snapshot at time of writing:
   `Medium_Phone`; core flows verified via `uiautomator` + screenshots, see §8.
 - Map styles: **switchable** from the Home app bar — *Streets* (OpenStreetMap) and *Satellite*
   (Esri World Imagery), remembered across restarts (`map_layer` in DataStore). Verified on the
-  emulator and on the S25; both layers' attribution is drawn under the map (§5.21).
+  emulator and on the S25; both layers' credit is drawn on the map as a tiny bottom-left label
+  (§5.21).
 - You-are-here: a **blue dot** at the live fix, added last to the overlay list so it draws over the
   pins; hidden until there is a fix and moved on every update. Its accuracy halo only appears when
   the fix is looser than the dot (~30 m) and is dropped above 200 m. Verified on the emulator
@@ -136,10 +138,10 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 
 | # | Screen | Package |
 |---|--------|---------|
-| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
+| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold round + button bottom right, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one; radius slider only — new zones are auto-numbered "Mosque N", renamed in Settings; while the thumb is held the sheet fades to 5% with the slider at 50% so the circle can be watched) | `ui/home` |
 | 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math; rolls at midnight) + next-prayer countdown (tomorrow's Fajr after Isha), prayer silence buffer | `ui/qibla` |
-| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches | `ui/settings` |
+| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only) + rename dialog, place search, monitoring switches | `ui/settings` |
 
 Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off, `AppIcons`,
 `Permissions` (`PermissionStatus` + `PermissionBanners`), `SystemSettings` (settings-page intents),
@@ -180,7 +182,8 @@ so a phone sitting on the rim can lose an arrival to one disagreement and then n
 mosque again for the visit. `detection/ZoneWatch.kt` therefore re-runs the same inside-test on every
 fix the detection service collects (and Home's, while open) and carries that fix into the worker, so
 the reading that decides an arrival is the reading that records it; the release side of the watch
-waits until the fix is clearly outside (25 m, or the fix's own error if larger) for 20 s. Full
+waits for a departure to *hold* — 20 s once the fix is clearly outside (25 m, or the fix's own error
+if larger), a full minute when it is only outside the drawn circle. Full
 reasoning in §5.25, §5.27 and §5.28.
 
 ### The routine (editable If / Then / When-it-ends)
@@ -270,10 +273,18 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     (`AndroidGradlePluginVersion`, `NewerVersionAvailable`) — leave them unless deliberately
     upgrading — and three `ClickableViewAccessibility` on the map's pin-drag touch listener in
     `HomeScreen`.
-11. **Bottom content floats over the map; there are no FABs.** Home and Settings use full-width gold
-    buttons instead of floating action buttons (the old `FabContentPadding` reservation was removed
-    with them). The editor sheet is deliberately non-modal: a scrim would swallow the map taps the
-    zone picker needs.
+11. **Bottom content floats over the map; there are no FABs.** Settings keeps its full-width gold
+    button; Home's add action is a round gold **+** button at the bottom right (`AddMosqueButton`,
+    a circular `IconButton`, grey while there is no fix). The map itself is nameless: markers carry
+    no title/snippet, the details card and the drag read-out show coordinates, radius and distance
+    only — the real name lives in Settings (§5.31). The editor sheet is deliberately non-modal: a
+    scrim would swallow the map taps the
+    zone picker needs. While the radius thumb is held the sheet fades to 5% opacity (container
+    colour and chrome) with the slider block at 50%, so the circle being sized stays visible; each
+    part carries its own alpha because layer alpha is clamped to 1 and cannot be divided out.
+    The sheet has no name field: new mosques are numbered by `nextMosqueName` ("Mosque 1", …, one
+    past the highest existing auto-name — `MosqueAutoNameTest`) and renamed from Settings
+    (`SettingsViewModel.renameMosque`, display-only, no fence re-registration).
 12. **osmdroid `Marker` needs an explicit app icon.** The shared default marker icon can go blank
     (and therefore untappable — hit-testing needs a drawn rect) after MapView detach/recycle cycles
     (`Marker.onDetach` nulls listeners and recycles the icon via `BitmapPool.asyncRecycle`). Every
@@ -330,8 +341,9 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     (`XYTileSource` included) concatenates `{base}/{z}/{x}/{y}`, so the enum's private
     `OnlineTileSourceBase` subclass builds the URL itself from `MapTileIndex`. Max zoom is 19,
     which is where that imagery ends, and osmdroid clamps the map to the source's range. Both
-    layers' licences require the credit to stay visible, so `MapCredit` draws it on the map, never
-    in Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
+    layers' licences require the credit to stay visible, so `MapCredit` draws it on the map as a
+    tiny bottom-left label (faint light shadow for dark imagery, no background pill), never in
+    Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
     zone polygons and the picker are overlays, and each source caches under its own name.
 22. **The you-are-here dot is added to the overlay list unconditionally and toggled with
     `isEnabled`.** The list is cleared and rebuilt by the `LaunchedEffect(mosques, picking)` effect,
@@ -444,7 +456,8 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
       against a fresh `current()` fix (`PresenceRules.fenceExitConfirmed`: only a usable fix *inside*
       overrules; no fix → the exit stands). Exit with no open visit just reconciles.
     - `detection/PresenceRules.kt`: usable = accuracy ≤ 100 m and age in −30 s..2 min; release distance
-      = radius + max(25 m, accuracy); exit dwell 20 s. `ZoneWatch` (mutex) applies all three.
+      = radius + max(25 m, accuracy); departure dwell 20 s clearly outside, 1 min outside the drawn
+      circle (§5.32). `ZoneWatch` (mutex) applies all three.
     - `VerificationWorker` is thin and unique per mosque (`"$TAG-$id"`, `APPEND_OR_REPLACE`) with a
       `source` input (`TriggerSource.FENCE/WATCH/MOVE/SAVE`).
     - `MonitoringController.disableMonitoring` closes every open visit (`closeAllOpen`) and lifts the
@@ -511,7 +524,8 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
       the open visits (`AttendanceDao.observeOpenVisitMosqueIds`): *Inside Zone* only once the visit is
       open; *confirming…* inside the circle before that; *GPS too weak to confirm* when the fix fails
       `PresenceRules.isUsable`; *detection off* inside with the switch off; *Leaving zone · confirming…*
-      outside with a visit still open (the 20 s exit dwell). Red for the inside states.
+      outside with a visit still open (the exit dwell — 20 s clearly outside, a minute on the rim,
+      §5.32). Red for the inside states.
     - **Home banners**, one at a time in this order: missing location grant → "Detection is off" (inside
       a zone with the switch off, "Turn on") → "Do Not Disturb access needed" (an armed on-arrival action
       needs DND and it is not granted) → notifications.
@@ -546,7 +560,42 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     - `tools/zone-boundary-sweep.ps1` `Get-PillState` reads *Leaving zone* as Outside: the script
       measures the circle, and just past the rim a visit may still be open (Phase 3 pill).
     - A fence `EXIT` re-checked by a fresh fix outside the circle closes at once (by design, §5.27);
-      the 20 s dwell and the *Leaving* pill only last while the software watch alone is deciding.
+      the watch's dwell (20 s clearly outside, a minute on the rim — §5.32) and the *Leaving* pill
+      only last while the software watch alone is deciding.
+31. **The zone editor fades while you size the circle, and zones are auto-numbered.**
+    - `MosqueEditorSheet` (Home) has no name field any more. New mosques are saved as
+      "Mosque N" via `nextMosqueName(existing)` (`ui/home/HomeScreen.kt`, pure,
+      `MosqueAutoNameTest`): one past the highest saved auto-name, so a deleted number is never
+      reused and custom names are ignored. `canSave` no longer waits on a typed name.
+    - While the radius thumb is held (`Slider.onValueChange` → `onDraggingChange(true)`,
+      `onValueChangeFinished` → false) the card container colour and its chrome animate to 5%
+      alpha and the slider block to 50%, so the live circle on the map is what the user watches.
+      Each part carries its own alpha: fading the whole card and dividing the slider's alpha out
+      does not work, layer alpha is clamped to 1. Verified on the emulator with a mid-drag
+      screenshot (2026-10-17).
+    - Renaming lives in Settings: a pencil button per mosque row opens `RenameMosqueDialog`
+      (`SettingsScreen.kt`), `SettingsViewModel.renameMosque` trims and ignores blanks. The name
+      is display-only — geofences and visits key off the id — so nothing is re-registered.
+    - The "not possible on Android" list (`BLOCKED_ACTIONS`) was removed the same pass: the
+      routine editor offers only switches the app can actually flip.
+32. **A departure has two clocks: 20 s clearly outside, one minute outside the drawn circle.**
+    Reported on the S25: the map showed the phone outside its circle while the sound stayed muted and
+    the pill read *Leaving zone · confirming…*. The release distance (radius + max(25 m, the fix's
+    error), §5.27) was never reached, so a phone parked on the rim — or one under a coarse fix —
+    could hold the visit open indefinitely with no fence `EXIT` to close it.
+    - `PresenceRules.departureConfirmed(distance, radius, accuracy, outsideForMillis)` picks the wait
+      from the reading: past the release distance → `EXIT_DWELL_MILLIS` (20 s); merely outside the
+      circle → `OUTSIDE_CIRCLE_EXIT_MILLIS` (60 s). A fix inside the circle is never a departure
+      however long the clock ran, so no caller can release a visit by passing a stale age.
+      `dwellElapsed` is gone; `watchTransition` takes the new `outsideForMillis` (null = not outside),
+      which keeps the distance rule and the time rule in one decision.
+    - `ZoneWatch` keeps one clock per mosque (`outsideSince`), started by the first usable fix outside
+      the **drawn** circle and cleared by any usable fix inside it, so it measures what the map paints
+      rather than what the margin allows. It only advances on usable fixes: a minute without readings
+      is not a minute outside. At the watch's own pace (INSIDE 20 s while a visit is open) the minute
+      lands after ~3 fixes.
+    - Untouched: the fence-`EXIT` re-check, pin moves, and the *Leaving zone · confirming…* pill,
+      which now lasts at most a minute.
 
 ---
 
@@ -557,18 +606,19 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 .\gradlew.bat :app:assembleDebug        # debug APK  → app/build/outputs/apk/debug/app-debug.apk
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking → app/build/outputs/apk/release/app-release.apk
-.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (102 tests)
+.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (112 tests)
 .\gradlew.bat :app:lintDebug            # must exit 0
 ```
 
 Unit tests worth knowing: `ZoneBoundaryTest` (the inside/outside rule — boundary, the
 accuracy-touches-but-does-not-count case, that the pipeline agrees with the map's pill, and the
-software watch's enter/hold/release branches; §5.23, §5.25), `PresenceRulesTest` (usable fixes,
-accuracy-aware release, fence-exit re-check, dwell), `RoutinePlannerTest` (owners, suppression,
+software watch's enter/hold/release branches; §5.23, §5.25, §5.32), `PresenceRulesTest` (usable fixes,
+accuracy-aware release, fence-exit re-check, departure dwell), `RoutinePlannerTest` (owners, suppression,
 access gained, partial lift, one-shots, `ringTarget` fallback; §5.27), `WatchCadenceTest` (background
 watch pace bands; §5.28), `GeofenceSelectionTest` (nearest-100 fence cap; §5.28), `ZonePresenceTest`
 (Home pill states), `DetectionSummaryTest` (Settings fence status), `NextPrayerTest` (tomorrow's Fajr
-after Isha; all §5.29), `CsvTest` (quoting + formula defusing; §5.30), `HaversineTest`,
+after Isha; all §5.29), `CsvTest` (quoting + formula defusing; §5.30), `MosqueAutoNameTest`
+(auto-numbering of new zones; §5.31), `HaversineTest`,
 `GeoUtilsTest`, `PrayerQiblaTest`.
 
 Boundary behaviour on a device (emulator only — mock coordinates cannot be injected into a physical
@@ -667,9 +717,9 @@ Static APK verification (no device needed):
   media/alarm volumes on entry, zeroed them, and restored everything on exit (DataStore-persisted,
   voice-call stream never touched). Verified on `emulator-5554`: entry → ringer SILENT, exit →
   ringer NORMAL, snapshot holds the true originals.
-  screenshots and pixel analysis — Home (Inside pill, gold button, check-in card), Settings
+  screenshots and pixel analysis — Home (Inside pill, gold + button, check-in card), Settings
   (tracking toggles flip detection both ways, search finds a place and opens the picker at it),
-  editor sheet (name + 20–100 m slider + Save & Activate), full save flow (DB row + instant
+  editor sheet (radius slider + Save & Activate; zones auto-numbered), full save flow (DB row + instant
   check-in), and both Room migrations on real data (v1 → v2 → v3, rows preserved). No crashes.
   Test residue left on the emulator: an `Al-Noor` mosque + its open check-in (delete from
   Settings if unwanted).
@@ -744,11 +794,12 @@ directories the emulator loads from:
 4. Confirm an `attendance_logs` row appears in History with the right method.
 5. Drag test (no walking): press and hold a saved pin and drag it onto your blue dot — the circle
    turns red, a visit row opens and the routine applies; drag it off again — green, visit closed,
-   routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds
-   (§5.25).
+   routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds,
+   and expect the visit to close once you have been outside the circle for a full minute (§5.25,
+   §5.32).
 6. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
-7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the credit
-   under the map changes, then confirm the choice survives an app restart.
+7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the
+   corner credit changes, then confirm the choice survives an app restart.
 8. Reboot the device; confirm monitoring restarts (boot receiver).
 9. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
 10. Emulator, boundary: `.\tools\zone-boundary-sweep.ps1 -Mosque "<name>" -WatchArrival` must report
@@ -764,7 +815,8 @@ directories the emulator loads from:
 3. `org.jetbrains.kotlin.android` intentionally not applied (AGP 9 built-in Kotlin) (§5.1).
 4. The geofence step uses Play Services `GeofencingClient` because AOSP has no first-party geofence API (§5.6).
 5. The editor sheet has no mini-map: the green circle drawn on the main map behind the sheet *is*
-   the live radius preview (and the exact geofence that gets armed).
+   the live radius preview (and the exact geofence that gets armed). That is also why the sheet
+   fades to 5% (slider at 50%) while the radius thumb is held — the preview must stay visible.
 6. Below API 33 the callback `Geocoder` API does not exist, so place search uses the blocking
    `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there; API 33+ uses
    the listener version. No API key or extra dependency either way.

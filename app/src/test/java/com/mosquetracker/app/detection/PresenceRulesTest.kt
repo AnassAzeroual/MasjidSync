@@ -59,11 +59,26 @@ class PresenceRulesTest {
 
     @Test
     fun watchDoesNotReleaseWhileTheFixCouldStillBeInside() {
-        // 90 m out of a 50 m circle, but the fix could be 60 m off.
-        assertNull(DetectionPipeline.watchTransition(90.0, 50, hasOpenVisit = true, accuracyMeters = 60f))
+        // 90 m out of a 50 m circle, but the fix could be 60 m off, so this is not the clear
+        // departure the short dwell is for.
+        assertNull(
+            DetectionPipeline.watchTransition(
+                distanceMeters = 90.0,
+                configuredRadiusMeters = 50,
+                hasOpenVisit = true,
+                accuracyMeters = 60f,
+                outsideForMillis = PresenceRules.EXIT_DWELL_MILLIS,
+            ),
+        )
         assertEquals(
             Geofence.GEOFENCE_TRANSITION_EXIT,
-            DetectionPipeline.watchTransition(111.0, 50, hasOpenVisit = true, accuracyMeters = 60f),
+            DetectionPipeline.watchTransition(
+                distanceMeters = 111.0,
+                configuredRadiusMeters = 50,
+                hasOpenVisit = true,
+                accuracyMeters = 60f,
+                outsideForMillis = PresenceRules.EXIT_DWELL_MILLIS,
+            ),
         )
     }
 
@@ -79,8 +94,25 @@ class PresenceRulesTest {
     }
 
     @Test
-    fun dwellNeedsTheFullTwentySeconds() {
-        assertFalse(PresenceRules.dwellElapsed(now, now + 19_999L))
-        assertTrue(PresenceRules.dwellElapsed(now, now + 20_000L))
+    fun aClearDepartureNeedsTheFullDwell() {
+        assertFalse(
+            PresenceRules.departureConfirmed(200.0, 50, 10f, PresenceRules.EXIT_DWELL_MILLIS - 1),
+        )
+        assertTrue(PresenceRules.departureConfirmed(200.0, 50, 10f, PresenceRules.EXIT_DWELL_MILLIS))
+    }
+
+    @Test
+    fun anUnclearDepartureNeedsAFullMinuteOutsideTheCircle() {
+        // 60 m out of a 50 m circle: outside the circle the map draws, but inside the release
+        // margin, so it takes the long wait.
+        assertFalse(PresenceRules.departureConfirmed(60.0, 50, 10f, 59_999L))
+        assertTrue(
+            PresenceRules.departureConfirmed(60.0, 50, 10f, PresenceRules.OUTSIDE_CIRCLE_EXIT_MILLIS),
+        )
+    }
+
+    @Test
+    fun aPhoneNeverSeenOutsideIsNeverReleased() {
+        assertFalse(PresenceRules.departureConfirmed(500.0, 50, 10f, null))
     }
 }

@@ -1,7 +1,6 @@
 package com.mosquetracker.app.detection
 
 import android.content.Context
-import com.google.android.gms.location.Geofence
 import com.mosquetracker.app.data.repository.AttendanceRepository
 import com.mosquetracker.app.data.repository.MosqueRepository
 import com.mosquetracker.app.model.LocationSample
@@ -22,9 +21,12 @@ import javax.inject.Singleton
  * watch instead runs every usable fix past the saved mosques, so the routine follows the same
  * readings that paint the map's circle red.
  *
- * Arrival is immediate. Departure has to be clear (see [PresenceRules.releaseDistanceMeters]) and
- * has to last [PresenceRules.EXIT_DWELL_MILLIS], so one stray reading never un-mutes the phone in
- * the middle of a prayer. Passes are serialized: fixes can come from more than one collector.
+ * Arrival is immediate. Departure has to last (see [PresenceRules.departureConfirmed]): a fix
+ * clearly outside the circle — past the release margin, or past its own error — ends the visit
+ * after [PresenceRules.EXIT_DWELL_MILLIS], and one that never got clear of the circle ends it after
+ * [PresenceRules.OUTSIDE_CIRCLE_EXIT_MILLIS]. Either way a single stray reading never un-mutes the
+ * phone in the middle of a prayer. Passes are serialized: fixes can come from more than one
+ * collector.
  */
 @Singleton
 class ZoneWatch @Inject constructor(
@@ -34,6 +36,8 @@ class ZoneWatch @Inject constructor(
 ) {
     private val mutex = Mutex()
     private val lastAttemptAt = mutableMapOf<Long, Long>()
+
+    /** When usable fixes first put the phone outside each mosque's drawn circle. */
     private val outsideSince = mutableMapOf<Long, Long>()
 
     /**
@@ -64,19 +68,22 @@ class ZoneWatch @Inject constructor(
             nearestEdge = nearestEdge?.let { minOf(it, edge) } ?: edge
             if (!usable) return@forEach
 
+            // The clock runs from the drawn circle, not from the release margin: a phone parked on
+            // the rim is outside the circle too, and that is the case the long wait exists for.
+            if (DetectionPipeline.isInsideZone(distance, mosque.geofenceRadius)) {
+                outsideSince.remove(mosque.id)
+            } else {
+                outsideSince.getOrPut(mosque.id) { now }
+            }
+
             val transition = DetectionPipeline.watchTransition(
                 distanceMeters = distance,
                 configuredRadiusMeters = mosque.geofenceRadius,
                 hasOpenVisit = mosque.id in open,
                 accuracyMeters = fix.accuracyMeters,
+                outsideForMillis = outsideSince[mosque.id]?.let { now - it },
             )
-            if (transition != Geofence.GEOFENCE_TRANSITION_EXIT) outsideSince.remove(mosque.id)
             if (transition == null) return@forEach
-
-            if (transition == Geofence.GEOFENCE_TRANSITION_EXIT) {
-                val since = outsideSince.getOrPut(mosque.id) { now }
-                if (!PresenceRules.dwellElapsed(since, now)) return@forEach
-            }
 
             if (now - (lastAttemptAt[mosque.id] ?: 0L) < ATTEMPT_COOLDOWN_MILLIS) return@forEach
             lastAttemptAt[mosque.id] = now
