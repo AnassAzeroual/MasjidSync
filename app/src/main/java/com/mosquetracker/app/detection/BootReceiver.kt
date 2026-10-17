@@ -3,9 +3,7 @@ package com.mosquetracker.app.detection
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.mosquetracker.app.data.prefs.SettingsStore
-import com.mosquetracker.app.service.DetectionForegroundService
-import com.mosquetracker.app.work.MonitoringScheduler
+import com.mosquetracker.app.monitoring.MonitoringController
 import com.mosquetracker.app.work.PrayerScheduler
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -17,8 +15,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var settingsStore: SettingsStore
-    @Inject lateinit var scheduler: MonitoringScheduler
+    @Inject lateinit var monitoringController: MonitoringController
     @Inject lateinit var prayerScheduler: PrayerScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -30,10 +27,7 @@ class BootReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
-                if (settingsStore.isMonitoringEnabled()) {
-                    DetectionForegroundService.start(context)
-                    scheduler.scheduleRefresh()
-                }
+                monitoringController.ensureRunning(fromBackground = true)
                 prayerScheduler.refresh()
             } finally {
                 pendingResult.finish()

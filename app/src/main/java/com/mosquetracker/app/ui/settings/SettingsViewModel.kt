@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.data.prefs.SettingsStore
 import com.mosquetracker.app.data.repository.MosqueRepository
+import com.mosquetracker.app.detection.FenceState
 import com.mosquetracker.app.model.AlertMode
 import com.mosquetracker.app.model.RoutineAction
 import com.mosquetracker.app.monitoring.MonitoringController
+import com.mosquetracker.app.routine.RoutineCoordinator
 import com.mosquetracker.app.routine.RoutineEngine
 import com.mosquetracker.app.ui.common.MosquePickRequest
 import com.mosquetracker.app.ui.common.PickRequest
@@ -35,6 +37,7 @@ class SettingsViewModel @Inject constructor(
     private val monitoringController: MonitoringController,
     private val settingsStore: SettingsStore,
     private val routineEngine: RoutineEngine,
+    private val routineCoordinator: RoutineCoordinator,
     private val pickRequest: MosquePickRequest,
     private val placeSearch: PlaceSearch,
 ) : ViewModel() {
@@ -60,6 +63,9 @@ class SettingsViewModel @Inject constructor(
     private val _access = MutableStateFlow(AccessState())
     val access: StateFlow<AccessState> = _access.asStateFlow()
 
+    /** Which tracked mosques Android is watching with a geofence, and why the rest are not. */
+    val fenceState: StateFlow<FenceState?> = monitoringController.fenceState
+
     private val _online = MutableStateFlow(false)
     /** Whether search is usable right now. Refreshed every time Settings is shown. */
     val online: StateFlow<Boolean> = _online.asStateFlow()
@@ -82,13 +88,21 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    /** After a permission prompt: the fences and the service may now be allowed to run. */
+    fun onPermissionsChanged() {
+        viewModelScope.launch { monitoringController.recheck() }
+    }
+
     fun setRoutineAction(action: RoutineAction, enabled: Boolean) {
-        viewModelScope.launch { settingsStore.setRoutineAction(action, enabled) }
+        viewModelScope.launch {
+            settingsStore.setRoutineAction(action, enabled)
+            routineCoordinator.reconcile()
+        }
     }
 
     /** Safety valve: put back anything the routine changed, regardless of the exit toggles. */
     fun restoreNow() {
-        viewModelScope.launch { routineEngine.restoreNow() }
+        viewModelScope.launch { routineCoordinator.restoreNow() }
     }
 
     fun setTracking(mosque: MosqueEntity, enabled: Boolean) {
@@ -105,14 +119,24 @@ class SettingsViewModel @Inject constructor(
             } else {
                 AlertMode.FULL_SILENT
             }
-            mosqueRepository.setAlertMode(mosque.id, next)
+            monitoringController.setAlertMode(mosque.id, next)
         }
     }
 
     fun deleteMosque(mosque: MosqueEntity) {
+        viewModelScope.launch { monitoringController.deleteMosque(mosque) }
+    }
+
+    /**
+     * Renames a mosque. Zones are auto-named ("Mosque 1", …) on the map, so this is where the
+     * real name is given. The name is display-only — the geofence keys off the id, so no
+     * re-registration is needed. A blank name is ignored.
+     */
+    fun renameMosque(mosque: MosqueEntity, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || trimmed == mosque.name) return
         viewModelScope.launch {
-            mosqueRepository.delete(mosque)
-            monitoringController.removeGeofence(mosque.id)
+            mosqueRepository.update(mosque.copy(name = trimmed))
         }
     }
 
@@ -123,7 +147,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setAutoSilent(enabled: Boolean) {
-        viewModelScope.launch { settingsStore.setAutoSilent(enabled) }
+        viewModelScope.launch {
+            settingsStore.setAutoSilent(enabled)
+            routineCoordinator.reconcile()
+        }
     }
 
     /** Hands off to the Home map picker, centred on the current GPS fix. */

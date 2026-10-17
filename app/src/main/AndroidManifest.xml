@@ -3,8 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Network. Used only to download OpenStreetMap tiles for the map screen; detection and
-      attendance logging stay entirely offline.
+      Network: map tiles (OpenStreetMap, Esri satellite), place-name search and the Aladhan
+      prayer-time API. Detection and attendance logging never need it.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -43,7 +43,9 @@
 
     <application
         android:name=".MosqueTrackerApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

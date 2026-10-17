@@ -2,6 +2,7 @@ package com.mosquetracker.app.ui.home
 
 import android.graphics.Point
 import android.view.MotionEvent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,11 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -27,11 +28,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -45,12 +44,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -58,22 +57,27 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mosquetracker.app.R
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.detection.DetectionPipeline
 import com.mosquetracker.app.detection.Haversine
+import com.mosquetracker.app.detection.PresenceRules
 import com.mosquetracker.app.model.LocationSample
 import com.mosquetracker.app.model.MapLayer
+import com.mosquetracker.app.ui.common.AlertBanner
 import com.mosquetracker.app.ui.common.AppIcons
+import com.mosquetracker.app.ui.common.MissingPermission
 import com.mosquetracker.app.ui.common.MosquePickRequest
+import com.mosquetracker.app.ui.common.PermissionBanners
 import com.mosquetracker.app.ui.common.PickRequest
-import com.mosquetracker.app.ui.common.RequiredPermissions
 import com.mosquetracker.app.ui.common.ScreenScaffold
-import com.mosquetracker.app.ui.common.rememberPermissionLauncher
-import com.mosquetracker.app.ui.common.rememberPermissionsGranted
+import com.mosquetracker.app.ui.common.openNotificationPolicySettings
+import com.mosquetracker.app.ui.common.rememberPermissionStatus
 import com.mosquetracker.app.ui.theme.DangerRed
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
@@ -105,6 +109,10 @@ private const val DefaultRadiusMeters = 60
 private const val MinRadiusMeters = 20
 private const val MaxRadiusMeters = 100
 private const val RadiusStepMeters = 10
+
+/** While the radius thumb is held: the sheet nearly disappears, the slider stays half-visible. */
+private const val DraggingSheetAlpha = 0.05f
+private const val DraggingSliderAlpha = 0.5f
 
 /** Green detection zone, the map-side twin of the brand palette. */
 private const val ZoneFillColor = 0x330B5D33
@@ -140,7 +148,7 @@ private const val LocationAccuracyStrokeWidthPx = 1.5f
 private const val MaxAccuracyHaloMeters = 200f
 
 /**
- * Home: the map, the Inside/Outside pill, the gold save button and the status card.
+ * Home: the map, the Inside/Outside pill, the gold add button and the status card.
  *
  * GPS is the only sensor the app uses; there is no Wi-Fi or Bluetooth tier.
  *
@@ -160,12 +168,17 @@ fun HomeScreen(
     val pickRequested by viewModel.pickRequested.collectAsStateWithLifecycle()
     val nearest by viewModel.nearest.collectAsStateWithLifecycle()
     val mapLayer by viewModel.mapLayer.collectAsStateWithLifecycle()
+    val monitoringEnabled by viewModel.monitoringEnabled.collectAsStateWithLifecycle()
+    val openVisitIds by viewModel.openVisitIds.collectAsStateWithLifecycle()
+    val dndMissing by viewModel.dndMissing.collectAsStateWithLifecycle()
 
-    val foregroundPermissions = remember { RequiredPermissions.foreground() }
-    val backgroundPermissions = remember { RequiredPermissions.backgroundLocation() }
-    val foregroundGranted by rememberPermissionsGranted(foregroundPermissions)
-    val backgroundGranted by rememberPermissionsGranted(backgroundPermissions)
-    val launcher = rememberPermissionLauncher { viewModel.startLocationUpdates() }
+    val permissions = rememberPermissionStatus(onResult = viewModel::onPermissionsChanged)
+
+    LifecycleStartEffect(viewModel) {
+        viewModel.startLocationUpdates()
+        onStopOrDispose { viewModel.stopLocationUpdates() }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshAccess() }
 
     var selectedMosqueId by rememberSaveable { mutableStateOf<Long?>(null) }
 
@@ -176,12 +189,13 @@ fun HomeScreen(
 
     // ----- zone picker ------------------------------------------------------
     var picking by rememberSaveable { mutableStateOf(false) }
-    var pickName by rememberSaveable { mutableStateOf("") }
     var pickLat by rememberSaveable { mutableStateOf<Double?>(null) }
     var pickLon by rememberSaveable { mutableStateOf<Double?>(null) }
     var pickRadius by rememberSaveable { mutableIntStateOf(DefaultRadiusMeters) }
     var saving by remember { mutableStateOf(false) }
     var editingMarker by rememberSaveable { mutableStateOf(false) }
+    // True while the radius thumb is held: the sheet fades away so the circle can be watched.
+    var draggingRadius by remember { mutableStateOf(false) }
 
     LaunchedEffect(message) {
         if (message != null) {
@@ -209,7 +223,6 @@ fun HomeScreen(
 
     fun beginPickingAt(latitude: Double, longitude: Double, moveCamera: Boolean) {
         selectedMosqueId = null
-        pickName = ""
         pickLat = latitude
         pickLon = longitude
         pickRadius = DefaultRadiusMeters
@@ -436,8 +449,8 @@ fun HomeScreen(
                 mapView.overlays.add(
                     Marker(mapView).apply {
                         position = GeoPoint(mosque.latitude, mosque.longitude)
-                        title = mosque.name
-                        snippet = "${mosque.geofenceRadius} m zone"
+                        // No title or snippet: the map stays nameless on purpose. New zones are
+                        // numbered and the real name lives in Settings, so a label here is noise.
                         // Every pin gets our own icon (never the shared osmdroid default, whose
                         // BitmapPool recycling on detach can blank it in later instances).
                         // Untracked mosques render dimmed so the state reads at a glance.
@@ -584,15 +597,22 @@ fun HomeScreen(
     val nearestDistance = nearest?.second
     val inside = nearestMosque != null && nearestDistance != null &&
         DetectionPipeline.isInsideZone(nearestDistance, nearestMosque.geofenceRadius)
+    val presence = ZonePresence.of(
+        hasFix = fix != null,
+        insideMosqueId = nearestMosque?.id?.takeIf { inside },
+        fixUsable = fix != null && PresenceRules.isUsable(fix, System.currentTimeMillis()),
+        monitoringEnabled = monitoringEnabled,
+        openVisitIds = openVisitIds,
+    )
 
-    val canSave = picking && pickName.isNotBlank() && centreLat != null && centreLon != null && !saving
+    val canSave = picking && centreLat != null && centreLon != null && !saving
 
     fun savePickedMosque() {
         val lat = pickLat ?: return
         val lon = pickLon ?: return
         saving = true
         viewModel.addMosque(
-            name = pickName,
+            name = nextMosqueName(mosques.map { it.name }),
             latitude = lat,
             longitude = lon,
             radiusMeters = pickRadius,
@@ -692,7 +712,6 @@ fun HomeScreen(
             // read-out while a pin is being dragged, so the two can never disagree mid-gesture.
             if (draggedMosque != null && draggedDistance != null) {
                 DragReadout(
-                    mosqueName = draggedMosque.name,
                     distanceMeters = draggedDistance,
                     radiusMeters = DetectionPipeline.zoneRadiusMeters(draggedMosque.geofenceRadius).toInt(),
                     inside = draggedInside,
@@ -702,8 +721,7 @@ fun HomeScreen(
                 )
             } else if (!picking) {
                 ZonePill(
-                    inside = inside,
-                    hasFix = fix != null,
+                    presence = presence,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 12.dp),
@@ -717,28 +735,43 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (!foregroundGranted) {
-                    PermissionBanner(
-                        title = "Location permission required",
-                        message = "MasjidSync needs GPS to show the map and to tell when you arrive.",
-                        buttonText = "Grant",
-                        onClick = { launcher.launch(foregroundPermissions.toTypedArray()) },
+                // One banner at most, so the map stays visible: location grants first (nothing
+                // works without them), then what stops the routine, then notifications.
+                val locationMissing = permissions.missing.filter { it != MissingPermission.NOTIFICATIONS }
+                when {
+                    locationMissing.isNotEmpty() -> PermissionBanners(
+                        status = permissions,
+                        shown = locationMissing.take(1),
                     )
-                } else if (!backgroundGranted) {
-                    PermissionBanner(
-                        title = "Allow background location",
-                        message = "Choose \"Allow all the time\" so mosque detection keeps working when the app is closed.",
-                        buttonText = "Allow",
-                        onClick = { launcher.launch(backgroundPermissions.toTypedArray()) },
+
+                    presence == ZonePresence.DETECTION_OFF && nearestMosque != null -> AlertBanner(
+                        title = "Detection is off",
+                        message = "You are inside ${nearestMosque.name}, but background detection " +
+                            "is switched off, so the routine will not run.",
+                        actionText = "Turn on",
+                        onAction = viewModel::enableMonitoring,
+                    )
+
+                    dndMissing -> AlertBanner(
+                        title = "Do Not Disturb access needed",
+                        message = "Without it the routine can only set the phone to vibrate, " +
+                            "not silent, and skips its Do Not Disturb actions.",
+                        actionText = "Grant",
+                        onAction = { context.openNotificationPolicySettings() },
+                    )
+
+                    MissingPermission.NOTIFICATIONS in permissions.missing -> PermissionBanners(
+                        status = permissions,
+                        shown = listOf(MissingPermission.NOTIFICATIONS),
                     )
                 }
 
                 if (picking && editingMarker) {
                     MosqueEditorSheet(
-                        name = pickName,
-                        onNameChange = { pickName = it },
                         radiusMeters = pickRadius,
                         onRadiusChange = { pickRadius = it },
+                        dragging = draggingRadius,
+                        onDraggingChange = { draggingRadius = it },
                         saving = saving,
                         canSave = canSave,
                         onSave = { savePickedMosque() },
@@ -746,7 +779,7 @@ fun HomeScreen(
                 } else if (picking && !editingMarker) {
                     HintCard(
                         title = "Position the mosque",
-                        message = "Touch and hold the pin, then drag it — or tap the map — to move the zone. Tap the pin to name it and size the circle. Tip: touch and hold any empty spot to drop a new pin there.",
+                        message = "Touch and hold the pin, then drag it — or tap the map — to move the zone. Tap the pin to size the circle. Tip: touch and hold any empty spot to drop a new pin there. You can rename it later in Settings.",
                         liveText = distanceToCentre?.let { distance ->
                             "%s — %d m from the centre".format(
                                 if (insideZone) "You are inside this zone" else "You are outside this zone",
@@ -778,9 +811,10 @@ fun HomeScreen(
                         )
                     }
 
-                    SaveCurrentPositionButton(
+                    AddMosqueButton(
                         enabled = fix != null,
                         onClick = { beginPicking(PickRequest.CurrentFix) },
+                        modifier = Modifier.align(Alignment.End),
                     )
                 }
 
@@ -788,38 +822,53 @@ fun HomeScreen(
                 // on the condition that this stays visible, so it belongs on the map itself.
                 MapCredit(
                     text = mapLayer.credit,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    modifier = Modifier.align(Alignment.Start),
                 )
             }
         }
     }
 }
 
-/** Floating Inside/Outside pill over the map. */
+/**
+ * Floating status pill over the map. Red whenever the reading is inside a circle — the same answer
+ * the map paints — with a suffix whenever the app has not (or not yet) acted on it.
+ */
 @Composable
-private fun ZonePill(inside: Boolean, hasFix: Boolean, modifier: Modifier = Modifier) {
+private fun ZonePill(presence: ZonePresence, modifier: Modifier = Modifier) {
+    val (container, content) = when (presence) {
+        ZonePresence.INSIDE,
+        ZonePresence.CONFIRMING,
+        ZonePresence.WEAK_FIX,
+        ZonePresence.DETECTION_OFF,
+        -> MaterialTheme.colorScheme.error to MaterialTheme.colorScheme.onError
+
+        ZonePresence.LEAVING ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+
+        ZonePresence.NO_FIX,
+        ZonePresence.OUTSIDE,
+        -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
-        color = when {
-            !hasFix -> MaterialTheme.colorScheme.surfaceVariant
-            inside -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.surfaceVariant
-        },
+        color = container,
         shadowElevation = 4.dp,
     ) {
         Text(
-            text = when {
-                !hasFix -> "Waiting for GPS…"
-                inside -> "Inside Zone"
-                else -> "Outside Zone"
+            text = when (presence) {
+                ZonePresence.NO_FIX -> "Waiting for GPS…"
+                ZonePresence.OUTSIDE -> "Outside Zone"
+                ZonePresence.INSIDE -> "Inside Zone"
+                ZonePresence.CONFIRMING -> "Inside Zone · confirming…"
+                ZonePresence.WEAK_FIX -> "Inside Zone · GPS too weak to confirm"
+                ZonePresence.DETECTION_OFF -> "Inside Zone · detection off"
+                ZonePresence.LEAVING -> "Leaving zone · confirming…"
             },
             style = MaterialTheme.typography.titleMedium,
-            color = when {
-                !hasFix -> MaterialTheme.colorScheme.onSurfaceVariant
-                inside -> MaterialTheme.colorScheme.onError
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = content,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
         )
     }
@@ -832,7 +881,6 @@ private fun ZonePill(inside: Boolean, hasFix: Boolean, modifier: Modifier = Modi
  */
 @Composable
 private fun DragReadout(
-    mosqueName: String,
     distanceMeters: Double,
     radiusMeters: Int,
     inside: Boolean,
@@ -849,9 +897,8 @@ private fun DragReadout(
         shadowElevation = 4.dp,
     ) {
         Text(
-            text = "%.0f m from %s · %s the %d m zone".format(
+            text = "%.0f m · %s the %d m zone".format(
                 distanceMeters,
-                mosqueName,
                 if (inside) "inside" else "outside",
                 radiusMeters,
             ),
@@ -868,66 +915,101 @@ private fun DragReadout(
     }
 }
 
-/** Gold button: save wherever the user is standing right now. */
+/** Gold round button, bottom right: save wherever the user is standing right now. */
 @Composable
-private fun SaveCurrentPositionButton(enabled: Boolean, onClick: () -> Unit) {
-    Button(
+private fun AddMosqueButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.secondary,
-            contentColor = Color(0xFF3F2E00),
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
+        modifier = modifier
+            .size(56.dp)
+            .background(
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                shape = CircleShape,
+            ),
     ) {
-        Icon(AppIcons.LocationOn, contentDescription = null)
-        Text("  Save Current Position as Mosque")
-    }
-}
-
-/** Small print under the map naming whoever supplied the tiles currently on screen. */
-@Composable
-private fun MapCredit(text: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-        shadowElevation = 2.dp,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        Icon(
+            AppIcons.Add,
+            contentDescription = "Save current position as mosque",
+            tint = if (enabled) {
+                Color(0xFF3F2E00)
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
     }
 }
 
 /**
- * The mosque editor sheet: name the mosque and size the circle while the map stays
- * interactive behind it. Deliberately not a modal sheet — a scrim would swallow the map
- * taps this needs. The green circle drawn on the main map is the live radius preview
- * (there is no separate mini-map; what is drawn is what the geofence is armed with).
+ * Tiny attribution in the map's bottom-left corner naming whoever supplied the tiles on screen.
+ * OpenStreetMap and Esri both require it to stay visible, so it is kept — but as a corner label
+ * rather than a pill, the way other map apps do it. The faint light shadow keeps it legible on
+ * dark satellite imagery without a background box.
+ */
+@Composable
+private fun MapCredit(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall.copy(
+            shadow = Shadow(color = Color.White.copy(alpha = 0.7f), offset = Offset(1f, 1f)),
+        ),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+/** The next free "Mosque N" name: one past the highest auto-named mosque already saved. */
+internal fun nextMosqueName(existingNames: List<String>): String {
+    val highest = existingNames.maxOfOrNull { name ->
+        AutoNamePattern.matchEntire(name)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    } ?: 0
+    return "Mosque ${highest + 1}"
+}
+
+private val AutoNamePattern = Regex("""Mosque (\d+)""")
+
+/**
+ * The mosque editor sheet: size the circle while the map stays interactive behind it.
+ * Deliberately not a modal sheet — a scrim would swallow the map taps this needs.
+ *
+ * While the thumb is held the whole sheet drops to 5% opacity and only the slider stays
+ * readable, at 50%: the circle on the map is the preview the user is actually sizing, and a
+ * solid panel would hide the very thing being changed. Everything returns on release.
+ *
+ * There is no name field — new mosques are numbered ("Mosque 1", "Mosque 2", …) and renamed in
+ * Settings, so drawing a zone is one less thing to fill in.
  */
 @Composable
 private fun MosqueEditorSheet(
-    name: String,
-    onNameChange: (String) -> Unit,
     radiusMeters: Int,
     onRadiusChange: (Int) -> Unit,
+    dragging: Boolean,
+    onDraggingChange: (Boolean) -> Unit,
     saving: Boolean,
     canSave: Boolean,
     onSave: () -> Unit,
 ) {
-    val focusManager: FocusManager = LocalFocusManager.current
+    // The slider sits inside the sheet, so every part gets its own alpha: the card and its
+    // chrome at 5%, the slider block at 50%. (Fading the whole card and dividing the slider's
+    // alpha out does not work — layer alpha is clamped to 1.)
+    val cardAlpha by animateFloatAsState(if (dragging) DraggingSheetAlpha else 1f, label = "sheet")
+    val sliderAlpha by animateFloatAsState(
+        if (dragging) DraggingSliderAlpha else 1f,
+        label = "slider",
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = cardAlpha),
+        ),
     ) {
         Column(
             modifier = Modifier
@@ -939,6 +1021,7 @@ private fun MosqueEditorSheet(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
+                    .alpha(cardAlpha)
                     .width(36.dp)
                     .height(4.dp)
                     .background(
@@ -947,53 +1030,52 @@ private fun MosqueEditorSheet(
                     ),
             )
 
-            Text("Mosque Name", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = name,
-                onValueChange = onNameChange,
-                placeholder = { Text("My Mosque") },
-                trailingIcon = { Icon(AppIcons.Edit, contentDescription = null) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Text("Radius Slider", style = MaterialTheme.typography.titleMedium)
-            Slider(
-                value = radiusMeters.toFloat(),
-                onValueChange = { onRadiusChange(it.toInt()) },
-                valueRange = MinRadiusMeters.toFloat()..MaxRadiusMeters.toFloat(),
-                steps = (MaxRadiusMeters - MinRadiusMeters) / RadiusStepMeters - 1,
-            )
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "${MinRadiusMeters}m",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column(modifier = Modifier.alpha(sliderAlpha)) {
+                Text("Zone radius", style = MaterialTheme.typography.titleMedium)
+                Slider(
+                    value = radiusMeters.toFloat(),
+                    // Truncating would turn a thumb resting at 59.99 into 59: snap to the 10 m step.
+                    onValueChange = {
+                        onDraggingChange(true)
+                        onRadiusChange((it / RadiusStepMeters).roundToInt() * RadiusStepMeters)
+                    },
+                    onValueChangeFinished = { onDraggingChange(false) },
+                    valueRange = MinRadiusMeters.toFloat()..MaxRadiusMeters.toFloat(),
+                    steps = (MaxRadiusMeters - MinRadiusMeters) / RadiusStepMeters - 1,
                 )
-                Text(
-                    text = "${radiusMeters}m",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${MaxRadiusMeters}m",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "${MinRadiusMeters}m",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "${radiusMeters}m",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "${MaxRadiusMeters}m",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+
             Text(
-                text = "The circle on the map updates live as you drag — red while you are standing inside it.",
+                text = "The circle on the map updates live as you drag — red while you are standing inside it. Hold the slider and this card fades so you can watch the circle. You can rename the mosque later in Settings.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.alpha(cardAlpha),
             )
 
             Button(
                 onClick = onSave,
                 enabled = canSave,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .alpha(cardAlpha),
             ) {
                 Text(if (saving) "Saving…" else "Save & Activate")
             }
@@ -1019,7 +1101,6 @@ private fun MosqueDetailsCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(mosque.name, style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = buildString {
                             append("%.5f".format(mosque.latitude))
@@ -1124,30 +1205,6 @@ private fun applyZoneStyle(
     polygon.fillPaint.color = if (inside) ZoneInsideFillColor else restingFill
     polygon.outlinePaint.color = if (inside) ZoneInsideStrokeColor else restingStroke
     polygon.outlinePaint.strokeWidth = if (inside) ZoneInsideStrokeWidthPx else restingWidth
-}
-
-@Composable
-private fun PermissionBanner(
-    title: String,
-    message: String,
-    buttonText: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(message, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = onClick) { Text(buttonText) }
-        }
-    }
 }
 
 /**

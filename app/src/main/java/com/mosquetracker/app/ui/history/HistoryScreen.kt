@@ -33,6 +33,7 @@ import com.mosquetracker.app.ui.common.EmptyState
 import com.mosquetracker.app.ui.common.KeyValueRow
 import com.mosquetracker.app.ui.common.ScreenScaffold
 import com.mosquetracker.app.ui.common.SectionCard
+import com.mosquetracker.app.util.Csv
 import com.mosquetracker.app.util.TimeFormat
 import com.mosquetracker.app.util.displayName
 import kotlinx.coroutines.Dispatchers
@@ -163,23 +164,16 @@ private fun buildCsv(history: List<AttendanceWithMosque>): String = buildString 
     history.forEach { entry ->
         val duration = entry.log.exitTime?.let { (it - entry.log.entryTime) / 60_000L } ?: ""
         appendLine(
-            listOf(
-                csvCell(entry.mosqueName ?: "Deleted mosque"),
-                csvCell(TimeFormat.dateTime(entry.log.entryTime)),
-                csvCell(entry.log.exitTime?.let { TimeFormat.dateTime(it) } ?: "in progress"),
+            Csv.row(
+                entry.mosqueName ?: "Deleted mosque",
+                TimeFormat.dateTime(entry.log.entryTime),
+                entry.log.exitTime?.let { TimeFormat.dateTime(it) } ?: "in progress",
                 duration.toString(),
                 entry.log.detectionMethod,
-            ).joinToString(","),
+            ),
         )
     }
 }
-
-private fun csvCell(value: String): String =
-    if (value.any { it == ',' || it == '"' || it == '\n' }) {
-        "\"" + value.replace("\"", "\"\"") + "\""
-    } else {
-        value
-    }
 
 @Composable
 private fun HistoryRow(entry: AttendanceWithMosque) {

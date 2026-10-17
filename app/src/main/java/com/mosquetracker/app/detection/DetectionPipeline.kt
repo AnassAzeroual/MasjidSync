@@ -119,9 +119,10 @@ class DetectionPipeline @Inject constructor(
         }
 
         /**
-         * How far outside the drawn circle a fix has to be before the software watch *releases*
-         * an open visit. Entering stays the plain, inclusive rule the map draws; leaving waits for
-         * a clear margin, so a phone parked on the rim does not mute and un-mute with every fix.
+         * How far outside the drawn circle a fix has to be before the software watch releases an
+         * open visit on the short dwell. Entering stays the plain, inclusive rule the map draws;
+         * leaving waits for a clear margin — or, failing that, for a minute outside the circle — so
+         * a phone parked on the rim does not mute and un-mute with every fix.
          */
         const val RELEASE_MARGIN_METERS = 25.0
 
@@ -135,21 +136,30 @@ class DetectionPipeline @Inject constructor(
          * while the routine stays off. Watching the same fixes the map paints (see ZoneWatch) is
          * what keeps the routine and the red circle in agreement.
          *
-         * EXIT needs the fix to be clearly outside, and this watch is the only place that margin
-         * lives: fence exits and pin moves stay immediate, because those follow an event the
-         * platform or the user has already decided on.
+         * EXIT has to hold, and [PresenceRules.departureConfirmed] says for how long: a fix clearly
+         * outside — past the margin, or past the fix's own error when that is larger (see
+         * [PresenceRules.releaseDistanceMeters]) — needs only the short dwell, while one that never
+         * got clear of the drawn circle needs a full minute of the same answer. [outsideForMillis]
+         * is that age, and the watch supplies it. Fence exits are re-checked against a fresh fix
+         * instead, and pin moves stay immediate, because the user has already decided on those.
          */
         fun watchTransition(
             distanceMeters: Double,
             configuredRadiusMeters: Int,
             hasOpenVisit: Boolean,
+            accuracyMeters: Float = 0f,
+            outsideForMillis: Long? = null,
         ): Int? = when {
             !hasOpenVisit && isInsideZone(distanceMeters, configuredRadiusMeters) ->
                 Geofence.GEOFENCE_TRANSITION_ENTER
 
             hasOpenVisit &&
-                distanceMeters > zoneRadiusMeters(configuredRadiusMeters) + RELEASE_MARGIN_METERS ->
-                Geofence.GEOFENCE_TRANSITION_EXIT
+                PresenceRules.departureConfirmed(
+                    distanceMeters = distanceMeters,
+                    configuredRadiusMeters = configuredRadiusMeters,
+                    accuracyMeters = accuracyMeters,
+                    outsideForMillis = outsideForMillis,
+                ) -> Geofence.GEOFENCE_TRANSITION_EXIT
 
             else -> null
         }

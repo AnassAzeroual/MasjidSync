@@ -1,11 +1,8 @@
 package com.mosquetracker.app.location
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Looper
-import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -30,21 +27,29 @@ class LocationProvider @Inject constructor(
 ) {
     private val client by lazy { LocationServices.getFusedLocationProviderClient(context) }
 
-    fun hasLocationPermission(): Boolean =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+    fun hasLocationPermission(): Boolean = LocationPermissions.hasForeground(context)
 
-    /** Continuous high-accuracy updates. Emits nothing (and closes) without permission. */
+    /**
+     * Continuous updates every [intervalMillis]. [highAccuracy] asks for GPS; without it the fused
+     * provider may answer from Wi-Fi and cell, which is far cheaper. Emits nothing (and closes)
+     * without permission.
+     */
     @SuppressLint("MissingPermission")
-    fun locationUpdates(intervalMillis: Long = 3_000L): Flow<LocationSample> = callbackFlow {
+    fun locationUpdates(
+        intervalMillis: Long = 3_000L,
+        highAccuracy: Boolean = true,
+    ): Flow<LocationSample> = callbackFlow {
         if (!hasLocationPermission()) {
             close()
             return@callbackFlow
         }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMillis)
+        val priority = if (highAccuracy) {
+            Priority.PRIORITY_HIGH_ACCURACY
+        } else {
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        }
+        val request = LocationRequest.Builder(priority, intervalMillis)
             .setMinUpdateIntervalMillis(intervalMillis / 2)
             .setWaitForAccurateLocation(false)
             .build()

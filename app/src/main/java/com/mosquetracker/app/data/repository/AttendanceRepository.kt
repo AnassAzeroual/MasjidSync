@@ -5,6 +5,7 @@ import com.mosquetracker.app.data.local.AttendanceWithMosque
 import com.mosquetracker.app.data.local.entity.AttendanceLogEntity
 import com.mosquetracker.app.model.DetectionMethod
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -23,7 +24,7 @@ class AttendanceRepository @Inject constructor(
 ) {
     val history: Flow<List<AttendanceWithMosque>> = attendanceDao.observeHistory()
 
-    /** Guards the check-then-insert in [recordEntry] while two triggers can race for one visit. */
+    /** Guards check-then-write visit changes while two triggers can race for one visit. */
     private val entryMutex = Mutex()
 
     fun visitsSince(sinceEpochMillis: Long): Flow<Int> =
@@ -60,11 +61,24 @@ class AttendanceRepository @Inject constructor(
     suspend fun recordExit(
         mosqueId: Long,
         epochMillis: Long = System.currentTimeMillis(),
-    ): Int {
+    ): Int = entryMutex.withLock {
         val open = attendanceDao.openLogsFor(mosqueId)
         open.forEach { attendanceDao.close(it.id, epochMillis) }
-        return open.size
+        open.size
     }
+
+    /** Closes every open visit, for when detection is switched off. */
+    suspend fun closeAllOpen(epochMillis: Long = System.currentTimeMillis()): Int =
+        entryMutex.withLock { attendanceDao.closeAllOpen(epochMillis) }
+
+    /** Mosques with a visit still open. */
+    suspend fun openVisitMosqueIds(): Set<Long> = attendanceDao.openVisitMosqueIds().toSet()
+
+    /** [openVisitMosqueIds], live: what the app currently believes the user is inside. */
+    val openVisitIds: Flow<Set<Long>> = attendanceDao.observeOpenVisitMosqueIds().map { it.toSet() }
+
+    /** True while an open visit at a tracked, full-silent mosque wants the routine. */
+    suspend fun hasOpenRoutineVisit(): Boolean = attendanceDao.openRoutineVisitCount() > 0
 
     /**
      * Whether the app still believes the user is inside this mosque, i.e. a visit is open. Used

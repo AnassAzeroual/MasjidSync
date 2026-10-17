@@ -59,4 +59,23 @@ interface AttendanceDao {
 
     @Query("UPDATE attendance_logs SET exit_time = :exitTime WHERE id = :id")
     suspend fun close(id: Long, exitTime: Long)
+
+    @Query("UPDATE attendance_logs SET exit_time = :exitTime WHERE exit_time IS NULL")
+    suspend fun closeAllOpen(exitTime: Long): Int
+
+    @Query("SELECT DISTINCT mosque_id FROM attendance_logs WHERE exit_time IS NULL")
+    suspend fun openVisitMosqueIds(): List<Long>
+
+    @Query("SELECT DISTINCT mosque_id FROM attendance_logs WHERE exit_time IS NULL")
+    fun observeOpenVisitMosqueIds(): Flow<List<Long>>
+
+    /** How many open visits belong to a tracked mosque that runs the routine (`FULL_SILENT`). */
+    @Query(
+        """
+        SELECT COUNT(*) FROM attendance_logs a
+        JOIN mosques m ON m.id = a.mosque_id
+        WHERE a.exit_time IS NULL AND m.tracking_enabled = 1 AND m.alert_mode = 'FULL_SILENT'
+        """,
+    )
+    suspend fun openRoutineVisitCount(): Int
 }

@@ -8,8 +8,8 @@ import com.google.android.gms.location.GeofencingEvent
 import com.mosquetracker.app.work.VerificationWorker
 
 /**
- * Receives Tier 1 geofence transitions. BroadcastReceivers must be fast, so the
- * GPS distance check is handed to a [VerificationWorker].
+ * Receives OS geofence transitions. BroadcastReceivers must be fast, so the decision is handed to
+ * a [VerificationWorker].
  */
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
@@ -26,7 +26,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
         event.triggeringGeofences?.forEach { geofence ->
             val mosqueId = geofence.requestId.toLongOrNull() ?: return@forEach
-            VerificationWorker.enqueue(context, mosqueId, transition)
+            VerificationWorker.enqueue(context, mosqueId, transition, TriggerSource.FENCE)
         }
     }
 

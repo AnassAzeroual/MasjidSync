@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mosquetracker.app.ui.common.AppIcons
 import com.mosquetracker.app.ui.common.EmptyState
@@ -49,6 +50,11 @@ fun QiblaScreen(
     val bufferMinutes by viewModel.bufferMinutes.collectAsStateWithLifecycle()
 
     val qibla = QiblaViewModel.qiblaFor(fix)
+
+    LifecycleStartEffect(viewModel) {
+        viewModel.startLocationUpdates()
+        onStopOrDispose { viewModel.stopLocationUpdates() }
+    }
 
     ScreenScaffold(title = "Qibla", modifier = modifier) { contentPadding ->
         Column(
@@ -100,15 +106,18 @@ fun QiblaScreen(
                     )
                 } else {
                     t.ordered().forEach { (name, start) ->
-                        val isNext = next?.name == name
+                        val isNext = next?.let { !it.tomorrow && it.name == name } == true
                         KeyValueRow(
                             label = if (isNext) "▶ $name" else name,
                             value = TimeFormat.time(start),
                         )
                     }
                     next?.let {
+                        if (it.tomorrow) {
+                            KeyValueRow(label = "▶ Fajr (tomorrow)", value = TimeFormat.time(it.startMillis))
+                        }
                         Text(
-                            text = "${it.name} ${formatCountdown(it.startMillis)}",
+                            text = "${if (it.tomorrow) "Fajr (tomorrow)" else it.name} ${formatCountdown(it.startMillis)}",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -138,7 +147,7 @@ fun QiblaScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "Muslim World League · Asr Standard · offline math, no network.",
+                    text = "Online: Aladhan, Morocco method (Fajr 19°, Isha 17°). Offline: calculated on the phone, Muslim World League (Fajr 18°, Isha 17°). Asr Standard.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

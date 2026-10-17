@@ -253,12 +253,13 @@ class ZoneBoundaryTest {
 
     @Test
     fun theWatchHoldsAnOpenVisitThroughBoundaryNoise() {
-        // Standing on the rim: a fix a few metres outside must not lift the routine, or the phone
-        // would mute and un-mute with every reading.
+        // Standing on the rim: a fix a few metres outside must not lift the routine on the short
+        // dwell, or the phone would mute and un-mute with every reading.
         val justOutside = DetectionPipeline.watchTransition(
             distanceMeters = 62.0,
             configuredRadiusMeters = 60,
             hasOpenVisit = true,
+            outsideForMillis = PresenceRules.EXIT_DWELL_MILLIS,
         )
         assertNull(justOutside)
 
@@ -266,6 +267,7 @@ class ZoneBoundaryTest {
             distanceMeters = 60.0 + DetectionPipeline.RELEASE_MARGIN_METERS,
             configuredRadiusMeters = 60,
             hasOpenVisit = true,
+            outsideForMillis = PresenceRules.EXIT_DWELL_MILLIS,
         )
         assertNull("the margin itself still holds the visit", atTheMargin)
     }
@@ -276,9 +278,45 @@ class ZoneBoundaryTest {
             distanceMeters = 60.0 + DetectionPipeline.RELEASE_MARGIN_METERS + 1e-9,
             configuredRadiusMeters = 60,
             hasOpenVisit = true,
+            outsideForMillis = PresenceRules.EXIT_DWELL_MILLIS,
         )
 
         assertEquals(Geofence.GEOFENCE_TRANSITION_EXIT, transition)
+    }
+
+    @Test
+    fun theWatchEndsAVisitThatStayedOutsideTheCircleForAMinute() {
+        // Parked on the rim: the map has shown the phone outside for a minute, so the visit — and
+        // the mute that goes with it — has to end even though no fix got clear of the margin.
+        val tooSoon = DetectionPipeline.watchTransition(
+            distanceMeters = 62.0,
+            configuredRadiusMeters = 60,
+            hasOpenVisit = true,
+            outsideForMillis = PresenceRules.OUTSIDE_CIRCLE_EXIT_MILLIS - 1,
+        )
+        assertNull(tooSoon)
+
+        val afterAMinute = DetectionPipeline.watchTransition(
+            distanceMeters = 62.0,
+            configuredRadiusMeters = 60,
+            hasOpenVisit = true,
+            outsideForMillis = PresenceRules.OUTSIDE_CIRCLE_EXIT_MILLIS,
+        )
+        assertEquals(Geofence.GEOFENCE_TRANSITION_EXIT, afterAMinute)
+    }
+
+    @Test
+    fun theWatchNeverEndsAVisitFromAFixInsideTheCircle() {
+        // No age at all makes an inside reading a departure: the clock only runs while the phone is
+        // seen outside.
+        val transition = DetectionPipeline.watchTransition(
+            distanceMeters = 10.0,
+            configuredRadiusMeters = 60,
+            hasOpenVisit = true,
+            outsideForMillis = PresenceRules.OUTSIDE_CIRCLE_EXIT_MILLIS * 10,
+        )
+
+        assertNull(transition)
     }
 
     @Test

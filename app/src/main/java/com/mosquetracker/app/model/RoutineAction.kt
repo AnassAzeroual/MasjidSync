@@ -1,10 +1,10 @@
 package com.mosquetracker.app.model
 
 /**
- * One thing the routine can do to the phone. The list is deliberately exhaustive: it holds
- * everything a normal Android app is actually allowed to do, so the UI can offer a real
- * checklist instead of hand-waving. Switches Android reserves for the system live in
- * [BLOCKED_ACTIONS] so the screen can say *why* they are missing.
+ * One thing the routine can do to the phone. The list holds everything a normal Android app is
+ * actually allowed to do, so the UI can offer a real checklist instead of hand-waving. Switches
+ * Android reserves for the system (Wi-Fi, Bluetooth, airplane mode and the like) are not here,
+ * because no action the user can arm would ever run.
  */
 enum class RoutineAction(
     /** Row title. */
@@ -228,40 +228,3 @@ enum class ActionRequirement {
     /** Needs "Modify system settings" (`WRITE_SETTINGS`, granted from the system settings screen). */
     WRITE_SETTINGS,
 }
-
-/**
- * A phone switch Android gives to the system only. Listed in the UI purely so the user can see
- * the full menu of possibilities and knows these are not missing by accident.
- */
-data class BlockedAction(val label: String, val reason: String)
-
-val BLOCKED_ACTIONS: List<BlockedAction> = listOf(
-    BlockedAction(
-        "Wi-Fi off",
-        "Android 10+ forbids apps from toggling Wi-Fi; only a system or device-owner app can.",
-    ),
-    BlockedAction(
-        "Bluetooth off",
-        "Android 13+ forbids apps from toggling Bluetooth.",
-    ),
-    BlockedAction(
-        "Battery saver / power saving",
-        "Reserved for the system — needs WRITE_SECURE_SETTINGS, grantable only over adb or root.",
-    ),
-    BlockedAction(
-        "Mobile data off",
-        "Carrier-level network policy; not grantable to a normal app.",
-    ),
-    BlockedAction(
-        "Airplane mode",
-        "System-only permission, same WRITE_SECURE_SETTINGS bar as battery saver.",
-    ),
-    BlockedAction(
-        "Lock the screen now",
-        "Needs Device Administrator or an accessibility service — too heavy for a routine.",
-    ),
-    BlockedAction(
-        "Restrict background data",
-        "Per-UID network policy is enforced by the system, not by apps.",
-    ),
-)

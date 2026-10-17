@@ -34,8 +34,30 @@ Snapshot at time of writing:
 - SDK: `minSdk 26`, `compileSdk 37`, `targetSdk 37`
 - Toolchain: AGP **9.4.1**, Gradle **9.6.0**, Kotlin (built-in via AGP) **2.2.10**, KSP **2.3.12**,
   Compose BOM **2026.09.00**
-- Status: debug + release builds green, 31 unit tests pass, `lintDebug` exits 0
-  (only the two informational version-currency warnings).
+- Status: debug + release builds green, 112 unit tests pass, `lintDebug` exits 0
+  (warnings only: version-currency + three pre-existing `ClickableViewAccessibility` in `HomeScreen`).
+- Branch **`fix/presence-routine-robustness`** (uncommitted, awaiting review):
+  - Phase 1 — presence/routine rewrite: `PresenceEngine` + `RoutineCoordinator`/`RoutinePlanner`,
+    vibrate fallback without DND, usable-fix rules + exit dwell (20 s clearly outside, 1 min outside
+    the circle — §5.32), fence-exit re-check,
+    monitoring-off closes visits (§5.27).
+  - Phase 2 — the foreground service hosts an adaptive background watch (`WatchCadence`), guarded
+    service starts, `ensureRunning` on app start, fences replaced (remove-then-add, nearest 100,
+    `FenceStatus`), refresh worker obeys the switch, screen GPS tied to the lifecycle (§5.28).
+  - Phase 3 — permission/status UI: notifications split from location, background location via the
+    app settings page on Android 11+, Home pill driven by the open visit (confirming / weak GPS /
+    detection off / leaving), "detection off" and "DND needed" banners, real fence status in
+    Settings, Qibla rolls at midnight and shows tomorrow's Fajr after Isha (§5.29).
+  - Phase 4 — hardening: no backup / device transfer, CSV formula defusing, one notification slot
+    per mosque, docs drift fixed (§5.30).
+  - **Verified on `emulator-5554` (2026-10-17), not yet on the S25:** boundary sweep 90/95/99 m
+    *Inside*, 101/105/110 m *Outside*, `GEOFENCE` arrival row from 250 m out; inside → ring, media
+    and notification streams muted, entry notice in slot `visit-2`; 300 m out → streams restored,
+    the same slot now reads "Left test2"; 110 m out → *Leaving zone · confirming…* for ~2 s, then the
+    re-checked fence `EXIT` closed the visit; Settings read "Watching 1 mosque zone(s) with Android
+    geofences"; switching detection off inside → visit closed, sound restored, pill *Inside Zone ·
+    detection off* + "Detection is off" banner, its *Turn on* re-opened the visit and re-muted;
+    Qibla footer names both sources, next prayer marked.
 - Routine: **editable** (one switch per action, catalogue in `model/RoutineAction.kt`); a full
   armed entry→exit cycle is verified on-device, see §8.
 - UI: **MasjidSync** template rebuild verified on-device (Home map + Inside pill + status card,
@@ -44,7 +66,8 @@ Snapshot at time of writing:
   `Medium_Phone`; core flows verified via `uiautomator` + screenshots, see §8.
 - Map styles: **switchable** from the Home app bar — *Streets* (OpenStreetMap) and *Satellite*
   (Esri World Imagery), remembered across restarts (`map_layer` in DataStore). Verified on the
-  emulator and on the S25; both layers' attribution is drawn under the map (§5.21).
+  emulator and on the S25; both layers' credit is drawn on the map as a tiny bottom-left label
+  (§5.21).
 - You-are-here: a **blue dot** at the live fix, added last to the overlay list so it draws over the
   pins; hidden until there is a fix and moved on every update. Its accuracy halo only appears when
   the fix is looser than the dot (~30 m) and is dropped above 200 m. Verified on the emulator
@@ -64,8 +87,9 @@ Snapshot at time of writing:
   S25 (dragged onto the phone → red circle, arrival row, routine applied; dragged off → green,
   visit closed, routine restored; a pin dropped on the dot stays grabbable — the dot declines long
   presses, §5.26).
-- Arrival is **watched** while the app runs: `detection/ZoneWatch.kt` runs
-  `DetectionPipeline.watchTransition` over every fix Home collects, and every trigger carries the
+- Arrival is **watched**, foreground and background: `detection/ZoneWatch.kt` runs
+  `DetectionPipeline.watchTransition` over every fix the detection service collects (and Home's,
+  while it is open), and every trigger carries the
   fix it was decided on into `VerificationWorker` (dragged pin, fresh save, watch) — the reading
   that decides an arrival is the reading that records it. Fence events carry none and are verified
   against `lastKnown()`, then against one freshly requested fix. A visit is released only 25 m past
@@ -114,13 +138,14 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 
 | # | Screen | Package |
 |---|--------|---------|
-| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
+| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold round + button bottom right, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one; radius slider only — new zones are auto-numbered "Mosque N", renamed in Settings; while the thumb is held the sheet fades to 5% with the slider at 50% so the circle can be watched) | `ui/home` |
 | 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
-| 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math) + next-prayer countdown, prayer silence buffer | `ui/qibla` |
-| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches, "not possible on Android" list | `ui/settings` |
+| 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math; rolls at midnight) + next-prayer countdown (tomorrow's Fajr after Isha), prayer silence buffer | `ui/qibla` |
+| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only) + rename dialog, place search, monitoring switches | `ui/settings` |
 
 Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off, `AppIcons`,
-`Permissions`, `SectionCard`/`KeyValueRow`/`EmptyState`). The old `ui/dashboard` (list) and
+`Permissions` (`PermissionStatus` + `PermissionBanners`), `SystemSettings` (settings-page intents),
+`SectionCard`/`KeyValueRow`/`EmptyState`/`AlertBanner`). The old `ui/dashboard` (list) and
 `ui/mosques` packages were removed in the MasjidSync rebuild.
 
 ### GPS-only detection (two steps, no Wi-Fi/BLE)
@@ -130,12 +155,15 @@ Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off
 | **1** | OS geofence `ENTER`/`EXIT` | `detection/GeofenceManager.kt`, `detection/GeofenceBroadcastReceiver.kt` |
 | **2** | Haversine distance ≤ the mosque's own drawn circle | `detection/DetectionPipeline.kt`, `detection/Haversine.kt`, `detection/GeoUtils.kt` |
 
-Flow: geofence transition → `GeofenceBroadcastReceiver` (trivial) → `VerificationWorker` runs the
-check → `AttendanceRepository` writes the row → `Notifier` posts → `RoutineEngine` applies /
-restores the user's routine. `monitoring/MonitoringController.kt` owns the foreground service, geofence registration
-(**tracked mosques only**), and the 15-minute `GeofenceRefreshWorker`. `detection/BootReceiver.kt`
-restarts monitoring after reboot / app update. Saving a mosque runs the same pipeline immediately
-(`onMosqueAdded`), so the user gets an instant answer.
+Flow: geofence transition → `GeofenceBroadcastReceiver` (trivial) → `VerificationWorker` (unique
+chain per mosque, `APPEND_OR_REPLACE`) → `detection/PresenceEngine.kt` (serialized) runs the check →
+`AttendanceRepository` writes the row → `Notifier` posts → `routine/RoutineCoordinator.kt`
+reconciles the routine with its current owners via `RoutinePlanner` → `RoutineEngine` applies /
+restores (§5.27). `monitoring/MonitoringController.kt` owns the foreground service (which also hosts
+the background watch), geofence registration (**tracked mosques only**, nearest 100, reported as a
+`FenceResult`), and the 15-minute `GeofenceRefreshWorker`. `detection/BootReceiver.kt`, the refresh
+worker and `MainActivity.onStart` call `ensureRunning` to bring the service back (§5.28). Saving a
+mosque runs the same pipeline immediately (`onMosqueAdded`), so the user gets an instant answer.
 
 The zone itself is **centre-based**: `DetectionPipeline.isInsideZone(distance, radius)` compares the
 reported position with the drawn circle and ignores the fix's accuracy, and the OS fence is registered
@@ -152,9 +180,11 @@ move needs.
 What the fence cannot do is *keep* watching. Its reports are single readings taken at single moments,
 so a phone sitting on the rim can lose an arrival to one disagreement and then never hear about that
 mosque again for the visit. `detection/ZoneWatch.kt` therefore re-runs the same inside-test on every
-fix Home collects and carries that fix into the worker, so the reading that decides an arrival is the
-reading that records it; the release side of the watch waits for a 25 m margin. Full reasoning in
-§5.25.
+fix the detection service collects (and Home's, while open) and carries that fix into the worker, so
+the reading that decides an arrival is the reading that records it; the release side of the watch
+waits for a departure to *hold* — 20 s once the fix is clearly outside (25 m, or the fix's own error
+if larger), a full minute when it is only outside the drawn circle. Full
+reasoning in §5.25, §5.27 and §5.28.
 
 ### The routine (editable If / Then / When-it-ends)
 
@@ -185,11 +215,14 @@ pending rather than silently dropping it, and Settings offers **Restore now** as
    then) and `setRingModeAndSettle` re-checks after a short gap.
 2. **Every action is best-effort.** Missing access, no flash unit, or an OEM refusal means the
    action is skipped, and the affected value is left out of the snapshot so nothing is restored to
-   a value we never set.
+   a value we never set. The one exception is the ringer: without DND access *Silent ringer* falls
+   back to **vibrate** (Android allows normal ↔ vibrate without DND), see §5.27.
 
-Actions Android reserves for the system are listed in `BLOCKED_ACTIONS` and shown in Settings so
-the user sees the full menu and the reason (Wi-Fi/Bluetooth toggling, battery saver, mobile data,
-airplane mode, lock-now, background-data restrictions).
+Nothing calls `RoutineEngine.apply/revert` directly any more except `RoutineCoordinator`; Settings,
+the presence engine, the prayer workers and the monitoring controller all call `reconcile()`.
+
+Actions Android reserves for the system are not offered at all — the routine editor only lists
+switches the app can actually flip, so nothing armed can silently fail to run.
 
 ### Database (Room, schema exported to `app/schemas/`, currently **v4**)
 
@@ -221,7 +254,7 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
    Material path data). The official `material-icons-core` / `-extended` artifacts are frozen at
    1.7.8 and unmaintained — do not add them. Map pins use the `mosque_pin.xml` vector drawable
    (green, on-brand); `ic_stat_mosque` serves notifications.
-5. **AOSP has no first-party geofencing API**, so Tier 1 uses Play Services' `GeofencingClient`.
+5. **AOSP has no first-party geofencing API**, so the geofence step uses Play Services' `GeofencingClient`.
 6. **Hilt Compose entry point** is `androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel`
    (`hilt-lifecycle-viewmodel-compose`), not the older `hilt-navigation-compose` path.
 7. **`-Xannotation-default-target=param-property`** is set in `:app`'s Kotlin options to adopt the
@@ -230,18 +263,28 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
    - `@SuppressLint("MissingPermission")` on `Notifier.updateForeground` / `Notifier.notify` — every
      `manager.notify(...)` call is gated by the private `canPostNotifications()` check, which lint
      cannot see through.
-   - `@SuppressLint("InlinedApi")` on `DetectionForegroundService.onStartCommand` —
+   - `@SuppressLint("InlinedApi")` on `DetectionForegroundService.promote` —
      `FOREGROUND_SERVICE_TYPE_LOCATION` is inlined from API 29; `ServiceCompat.startForeground`
      swallows the type below 29, so it is safe on minSdk 26.
 9. **Adaptive launcher icons live in `res/mipmap-anydpi/`** (not `-anydpi-v26`) because minSdk is 26
     and lint flags the redundant `-v26` qualifier. They reference `@drawable/ic_launcher_background`
     (which hardcodes `#0F766E`), so `@color/ic_launcher_background` was removed as unused.
-10. Only two lint warnings remain, both informational version-currency notices
-    (`AndroidGradlePluginVersion`, `NewerVersionAvailable`). Leave them unless deliberately upgrading.
-11. **Bottom content floats over the map; there are no FABs.** Home and Settings use full-width gold
-    buttons instead of floating action buttons (the old `FabContentPadding` reservation was removed
-    with them). The editor sheet is deliberately non-modal: a scrim would swallow the map taps the
-    zone picker needs.
+10. Lint warnings that remain: the two informational version-currency notices
+    (`AndroidGradlePluginVersion`, `NewerVersionAvailable`) — leave them unless deliberately
+    upgrading — and three `ClickableViewAccessibility` on the map's pin-drag touch listener in
+    `HomeScreen`.
+11. **Bottom content floats over the map; there are no FABs.** Settings keeps its full-width gold
+    button; Home's add action is a round gold **+** button at the bottom right (`AddMosqueButton`,
+    a circular `IconButton`, grey while there is no fix). The map itself is nameless: markers carry
+    no title/snippet, the details card and the drag read-out show coordinates, radius and distance
+    only — the real name lives in Settings (§5.31). The editor sheet is deliberately non-modal: a
+    scrim would swallow the map taps the
+    zone picker needs. While the radius thumb is held the sheet fades to 5% opacity (container
+    colour and chrome) with the slider block at 50%, so the circle being sized stays visible; each
+    part carries its own alpha because layer alpha is clamped to 1 and cannot be divided out.
+    The sheet has no name field: new mosques are numbered by `nextMosqueName` ("Mosque 1", …, one
+    past the highest existing auto-name — `MosqueAutoNameTest`) and renamed from Settings
+    (`SettingsViewModel.renameMosque`, display-only, no fence re-registration).
 12. **osmdroid `Marker` needs an explicit app icon.** The shared default marker icon can go blank
     (and therefore untappable — hit-testing needs a drawn rect) after MapView detach/recycle cycles
     (`Marker.onDetach` nulls listeners and recycles the icon via `BitmapPool.asyncRecycle`). Every
@@ -260,7 +303,8 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     flips monitoring and re-reads state every `onStartListening`; no unlock needed.
 16. **CSV export uses the Storage Access Framework** (`CreateDocument`), so no storage permission
     is declared. Stats (streak included) are computed in Kotlin from the already-loaded history
-    rows — no extra DAO queries.
+    rows — no extra DAO queries. Cells go through `util/Csv.kt` (RFC 4180 quoting + formula
+    defusing, `CsvTest`, §5.30).
 17. **Prayer times prefer the Aladhan API, degrade gracefully.** `PrayerRepository` tries
     `timings/DD-MM-YYYY?latitude=..&longitude=..&method=21` (Morocco convention, matching local
     mosque timetables; plain HttpURLConnection + org.json, no new dependency), falls back to the
@@ -297,8 +341,9 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     (`XYTileSource` included) concatenates `{base}/{z}/{x}/{y}`, so the enum's private
     `OnlineTileSourceBase` subclass builds the URL itself from `MapTileIndex`. Max zoom is 19,
     which is where that imagery ends, and osmdroid clamps the map to the source's range. Both
-    layers' licences require the credit to stay visible, so `MapCredit` draws it on the map, never
-    in Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
+    layers' licences require the credit to stay visible, so `MapCredit` draws it on the map as a
+    tiny bottom-left label (faint light shadow for dark imagery, no background pill), never in
+    Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
     zone polygons and the picker are overlays, and each source caches under its own name.
 22. **The you-are-here dot is added to the overlay list unconditionally and toggled with
     `isEnabled`.** The list is cleared and rebuilt by the `LaunchedEffect(mosques, picking)` effect,
@@ -384,6 +429,173 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     with a pin sitting on the dot (pin box `513,1146-564,1217`, dot `523,1162-555,1194`): pressing
     the pin's centre and dragging it away moved the mosque, closed visit 20 and unmuted every stream,
     where the same press had done nothing before the fix.
+27. **The routine is reconciled against its owners, and presence decisions are serialized.** Reported
+    on the S25: the circle turned red but the phone was not muted, and leaving the zone never put the
+    sound back. Two root causes: (a) every ring-mode action was skipped without DND access, so a
+    default routine left the ringer ringing; (b) every exit path was event-driven and lossy — the OS
+    fence `EXIT` needs background location, and the watch only runs while Home collects fixes — and
+    each event applied/reverted on its own view, so overlapping triggers (prayer window + visit,
+    notify-only exit, repeated ENTER) could fight. The rewrite:
+    - `routine/RoutinePlanner.kt` (pure, unit-tested) computes a `RoutinePlan(apply, restore,
+      clearSuppression)` from **owners**: an open visit at a tracked `FULL_SILENT` mosque
+      (`AttendanceDao.openRoutineVisitCount`, auto-silent on) and an open prayer window
+      (`prayer_window_end` in DataStore, prayer silence + auto-silent on; sound subset only). No
+      owner + pending snapshot → run the armed exit actions (+ `extraExit`, which the prayer end uses
+      to force `RESTORE_SOUND`). An owner still present → re-apply only when an action is missing from
+      `snapshot.actions`, DND/WRITE_SETTINGS was granted since the last apply (the snapshot now records
+      `dnd_granted`/`write_settings_granted`), or a new visit opened; a part no owner wants any more is
+      lifted (visit ended inside a prayer window → `RESTORE_DEVICE` only). `VIBRATE_PULSE` fires only
+      for a new visit.
+    - `routine/RoutineCoordinator.kt` is the single door (mutex). *Restore now* while an owner remains
+      sets `routine_suppressed`; only a new full-silent visit or every owner leaving clears it.
+    - `RoutineEngine.ringTarget(wanted, dndGranted, currentMode)`: with DND → silent (silent wins) or
+      vibrate; without DND → vibrate, or leave alone if the phone is already silent. `MUTE_SYSTEM` is
+      skipped and `systemVolume` not captured whenever a ring-mode change will actually be made.
+    - `detection/PresenceEngine.kt` (mutex) owns enter/exit. Enter skips untracked mosques; evidence
+      is the carried fix if usable, else `lastKnown()` then `current()`. Fence `EXIT` is re-checked
+      against a fresh `current()` fix (`PresenceRules.fenceExitConfirmed`: only a usable fix *inside*
+      overrules; no fix → the exit stands). Exit with no open visit just reconciles.
+    - `detection/PresenceRules.kt`: usable = accuracy ≤ 100 m and age in −30 s..2 min; release distance
+      = radius + max(25 m, accuracy); departure dwell 20 s clearly outside, 1 min outside the drawn
+      circle (§5.32). `ZoneWatch` (mutex) applies all three.
+    - `VerificationWorker` is thin and unique per mosque (`"$TAG-$id"`, `APPEND_OR_REPLACE`) with a
+      `source` input (`TriggerSource.FENCE/WATCH/MOVE/SAVE`).
+    - `MonitoringController.disableMonitoring` closes every open visit (`closeAllOpen`) and lifts the
+      routine; untrack/delete close that mosque's visit; alert-mode changes reconcile.
+      `AttendanceRepository.recordExit` now shares `recordEntry`'s mutex.
+    - Prayer workers: the silence worker stores the window end (input `window_end`) and reconciles;
+      the restore worker clears it, reconciles with `RESTORE_SOUND`, and chains the next window with
+      `allowImmediate = false`. `PrayerScheduler.cancel()` is now `suspend` and closes an open window.
+    The background half of the watch is §5.28.
+28. **The foreground service hosts the background watch (Phase 2).** Before this, the watch only ran
+    on Home's 3 s stream, so with the app backgrounded exits depended on the OS fence alone (and that
+    needs *Allow all the time*).
+    - `DetectionForegroundService` collects its own fused stream and feeds `ZoneWatch.onFix`, which now
+      returns the next `detection/WatchCadence.kt` pace (pure, `WatchCadenceTest`): open visit →
+      INSIDE 20 s GPS; nearest tracked edge ≤ 300 m → NEAR 10 s GPS (also the starting pace);
+      ≤ 2 km → APPROACH 60 s GPS; else / nothing tracked → FAR 180 s balanced power. A pace change
+      restarts the request via `MutableStateFlow` + `collectLatest`. Unusable fixes still set the pace.
+      `LocationProvider.locationUpdates(interval, highAccuracy)` picks the priority.
+    - **Start guards.** `DetectionForegroundService.start(context, fromBackground): Boolean` needs a
+      foreground location grant, and for `fromBackground` (boot, QS tile, refresh worker) also
+      `ACCESS_BACKGROUND_LOCATION` on Q+ (`location/LocationPermissions.kt`): Android 14 throws on
+      `startForeground(type=location)` from the background without it, and a `startForegroundService`
+      start that never reaches `startForeground` crashes the app (the system posts the crash when
+      the service stops). Android 12+'s `ForegroundServiceStartNotAllowedException` (an
+      `IllegalStateException`) is caught at the call site. Inside the service `promote()` catches
+      `SecurityException`/`IllegalStateException` as a last resort, then `stopSelf` +
+      `START_NOT_STICKY`; a sticky restart after detection was turned off stops itself.
+      `isRunning` (process-local, `@Volatile`) tells callers whether a start is needed.
+    - `MonitoringController.ensureRunning(fromBackground)`: no-op when detection is off; otherwise
+      schedules the refresh worker and starts the service if it is not running. Called from
+      `MainActivity.onStart` (foreground — always allowed), `BootReceiver`, `GeofenceRefreshWorker`
+      (which cancels itself when detection is off). The tile uses `enableMonitoring(fromBackground = true)`.
+    - `GeofenceManager.register(mosques, near)` (mutex): checks FINE then background location, always
+      `removeAll()` first, then adds `selectForRegistration(…, MAX_GEOFENCES = 100)` — nearest to
+      `lastKnown()` past the cap (`GeofenceSelectionTest`). Returns `FenceResult(tracked, registered,
+      FenceStatus)` (`ACTIVE`, `NO_MOSQUES`, `NO_LOCATION_PERMISSION`, `NO_BACKGROUND_PERMISSION`,
+      `FAILED`), also published as `GeofenceManager.state: StateFlow<FenceState?>` and shown in
+      Settings (§5.29).
+    - `PresenceEngine.enter` returns false with detection off, so a watch fix or fence event already
+      in flight when the switch flips cannot open a visit.
+    - Home's and Qibla's 3 s high-accuracy streams follow the screen (`LifecycleStartEffect` →
+      `startLocationUpdates` / `stopLocationUpdates`); the view models no longer start them in `init`.
+29. **Permission and status UI says what is really happening (Phase 3).**
+    - **Permissions split.** `ui/common/Permissions.kt`: `RequiredPermissions.missing(context)` returns
+      independent `MissingPermission`s — `LOCATION` (no foreground grant), `PRECISE_LOCATION` (coarse
+      only), `BACKGROUND_LOCATION`, `NOTIFICATIONS`. Before this, `POST_NOTIFICATIONS` was bundled with
+      location, so a denied notification prompt kept "Location permission required" up forever and hid
+      the background step.
+    - **One launcher per screen.** `rememberPermissionStatus(onResult)` owns the
+      `RequestMultiplePermissions` launcher, so a result is not lost when the banner that asked leaves
+      composition; it re-reads the grants on every `ON_RESUME`. `PermissionBanners(status, shown)`
+      draws one `AlertBanner` per missing grant, each with an "App settings" fallback (a permanently
+      denied permission no longer shows a prompt).
+    - **Background location on Android 11+** can only be granted on the app's settings page, so that
+      banner deep-links there (`openAppDetailsSettings`, `ui/common/SystemSettings.kt`); on Android 10 it
+      is still a runtime prompt.
+    - **Grants made in system settings re-arm the fences.** `MonitoringController.recheck()` (called
+      from `MainActivity.onStart` and after any permission result) runs `ensureRunning` and
+      re-registers the fences when the last `FenceStatus` was a permission refusal or `FAILED`.
+    - **Settings** "Background detection" subtitle comes from `ui/settings/DetectionSummary.kt`
+      (pure, `DetectionSummaryTest`): off / nothing tracked / starting / watching N / nearest 100 of N /
+      arming / not armed for lack of precise or "all the time" location / refused — problems in red.
+    - **Home pill** (`ui/home/ZonePresence.kt`, pure, `ZonePresenceTest`) combines the circle test with
+      the open visits (`AttendanceDao.observeOpenVisitMosqueIds`): *Inside Zone* only once the visit is
+      open; *confirming…* inside the circle before that; *GPS too weak to confirm* when the fix fails
+      `PresenceRules.isUsable`; *detection off* inside with the switch off; *Leaving zone · confirming…*
+      outside with a visit still open (the exit dwell — 20 s clearly outside, a minute on the rim,
+      §5.32). Red for the inside states.
+    - **Home banners**, one at a time in this order: missing location grant → "Detection is off" (inside
+      a zone with the switch off, "Turn on") → "Do Not Disturb access needed" (an armed on-arrival action
+      needs DND and it is not granted) → notifications.
+    - **Qibla.** Times are recomputed only when the fix moves ≥ 1 km or the date changes (the 30 s
+      ticker rolls it at midnight); tomorrow's Fajr is computed too, so after Isha the countdown is
+      `Fajr (tomorrow)` (`QiblaViewModel.nextPrayerAfter`, `NextPrayerTest`). Tomorrow always comes from
+      the phone's MWL math (only today is fetched/cached), so it can differ from the Moroccan timetable
+      by a few minutes until midnight. The footer now names both sources: Aladhan method 21 online,
+      MWL offline.
+    - Radius slider snaps with `roundToInt` (it truncated before, so a thumb at 59.99 m saved 59 m).
+30. **Hardening (Phase 4).**
+    - **No backup.** `android:allowBackup="false"`, `res/xml/data_extraction_rules.xml` (Android 12+:
+      every domain excluded from `cloud-backup` and `device-transfer`; `allowBackup` alone does not
+      stop device-to-device transfer there) and `res/xml/backup_rules.xml` (`fullBackupContent` for
+      8–11, which lint's `DataExtractionRules` check asks for). The DB and DataStore hold a precise
+      where/when log.
+      Trade-off: a new phone starts empty; the CSV export is the way to keep history.
+    - **CSV formula injection.** `util/Csv.kt` `cell()` prefixes `'` to a value starting with `=`,
+      `+`, `-`, `@`, tab or CR (OWASP guidance), then RFC 4180-quotes on `,` `"` LF CR. `row()` runs
+      every cell through it, including the duration and method columns. `CsvTest`.
+    - **Notification ids.** Entry/exit notices used `System.currentTimeMillis().toInt()` (overflowing
+      and collision-prone). Now `notify(tag = "visit-<mosqueId>", id = 1)`: one slot per mosque, so the
+      exit notice replaces the entry notice. The tag keeps them clear of `FOREGROUND_ID = 1001`.
+    - Manifest network comment and the README permission/deviation text now list every network use
+      (OSM + Esri tiles, place search, Aladhan); "Tier 1" wording dropped (there is only one geofence
+      step, no tiers).
+    - `README.md` now opens with a **Features** section, a grouped list of every user-facing
+      feature (detection, routine, map, adding mosques, history, Qibla/prayer, permissions,
+      privacy). Its intro lists every network use, and its project layout covers the qibla/common UI,
+      `ZonePresence`, `DetectionSummary`, `PrayerRepository`, `PrayerApi`, `Csv`, `CompassProvider`,
+      `MapLayer` and the tile service. Keep that list current when a feature lands.
+    - `tools/zone-boundary-sweep.ps1` `Get-PillState` reads *Leaving zone* as Outside: the script
+      measures the circle, and just past the rim a visit may still be open (Phase 3 pill).
+    - A fence `EXIT` re-checked by a fresh fix outside the circle closes at once (by design, §5.27);
+      the watch's dwell (20 s clearly outside, a minute on the rim — §5.32) and the *Leaving* pill
+      only last while the software watch alone is deciding.
+31. **The zone editor fades while you size the circle, and zones are auto-numbered.**
+    - `MosqueEditorSheet` (Home) has no name field any more. New mosques are saved as
+      "Mosque N" via `nextMosqueName(existing)` (`ui/home/HomeScreen.kt`, pure,
+      `MosqueAutoNameTest`): one past the highest saved auto-name, so a deleted number is never
+      reused and custom names are ignored. `canSave` no longer waits on a typed name.
+    - While the radius thumb is held (`Slider.onValueChange` → `onDraggingChange(true)`,
+      `onValueChangeFinished` → false) the card container colour and its chrome animate to 5%
+      alpha and the slider block to 50%, so the live circle on the map is what the user watches.
+      Each part carries its own alpha: fading the whole card and dividing the slider's alpha out
+      does not work, layer alpha is clamped to 1. Verified on the emulator with a mid-drag
+      screenshot (2026-10-17).
+    - Renaming lives in Settings: a pencil button per mosque row opens `RenameMosqueDialog`
+      (`SettingsScreen.kt`), `SettingsViewModel.renameMosque` trims and ignores blanks. The name
+      is display-only — geofences and visits key off the id — so nothing is re-registered.
+    - The "not possible on Android" list (`BLOCKED_ACTIONS`) was removed the same pass: the
+      routine editor offers only switches the app can actually flip.
+32. **A departure has two clocks: 20 s clearly outside, one minute outside the drawn circle.**
+    Reported on the S25: the map showed the phone outside its circle while the sound stayed muted and
+    the pill read *Leaving zone · confirming…*. The release distance (radius + max(25 m, the fix's
+    error), §5.27) was never reached, so a phone parked on the rim — or one under a coarse fix —
+    could hold the visit open indefinitely with no fence `EXIT` to close it.
+    - `PresenceRules.departureConfirmed(distance, radius, accuracy, outsideForMillis)` picks the wait
+      from the reading: past the release distance → `EXIT_DWELL_MILLIS` (20 s); merely outside the
+      circle → `OUTSIDE_CIRCLE_EXIT_MILLIS` (60 s). A fix inside the circle is never a departure
+      however long the clock ran, so no caller can release a visit by passing a stale age.
+      `dwellElapsed` is gone; `watchTransition` takes the new `outsideForMillis` (null = not outside),
+      which keeps the distance rule and the time rule in one decision.
+    - `ZoneWatch` keeps one clock per mosque (`outsideSince`), started by the first usable fix outside
+      the **drawn** circle and cleared by any usable fix inside it, so it measures what the map paints
+      rather than what the margin allows. It only advances on usable fixes: a minute without readings
+      is not a minute outside. At the watch's own pace (INSIDE 20 s while a visit is open) the minute
+      lands after ~3 fixes.
+    - Untouched: the fence-`EXIT` re-check, pin moves, and the *Leaving zone · confirming…* pill,
+      which now lasts at most a minute.
 
 ---
 
@@ -394,14 +606,20 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 .\gradlew.bat :app:assembleDebug        # debug APK  → app/build/outputs/apk/debug/app-debug.apk
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking → app/build/outputs/apk/release/app-release.apk
-.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (36 tests)
+.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (112 tests)
 .\gradlew.bat :app:lintDebug            # must exit 0
 ```
 
 Unit tests worth knowing: `ZoneBoundaryTest` (the inside/outside rule — boundary, the
 accuracy-touches-but-does-not-count case, that the pipeline agrees with the map's pill, and the
-software watch's enter/hold/release branches; §5.23, §5.25), `HaversineTest`, `GeoUtilsTest`,
-`PrayerQiblaTest`.
+software watch's enter/hold/release branches; §5.23, §5.25, §5.32), `PresenceRulesTest` (usable fixes,
+accuracy-aware release, fence-exit re-check, departure dwell), `RoutinePlannerTest` (owners, suppression,
+access gained, partial lift, one-shots, `ringTarget` fallback; §5.27), `WatchCadenceTest` (background
+watch pace bands; §5.28), `GeofenceSelectionTest` (nearest-100 fence cap; §5.28), `ZonePresenceTest`
+(Home pill states), `DetectionSummaryTest` (Settings fence status), `NextPrayerTest` (tomorrow's Fajr
+after Isha; all §5.29), `CsvTest` (quoting + formula defusing; §5.30), `MosqueAutoNameTest`
+(auto-numbering of new zones; §5.31), `HaversineTest`,
+`GeoUtilsTest`, `PrayerQiblaTest`.
 
 Boundary behaviour on a device (emulator only — mock coordinates cannot be injected into a physical
 phone):
@@ -499,9 +717,9 @@ Static APK verification (no device needed):
   media/alarm volumes on entry, zeroed them, and restored everything on exit (DataStore-persisted,
   voice-call stream never touched). Verified on `emulator-5554`: entry → ringer SILENT, exit →
   ringer NORMAL, snapshot holds the true originals.
-  screenshots and pixel analysis — Home (Inside pill, gold button, check-in card), Settings
+  screenshots and pixel analysis — Home (Inside pill, gold + button, check-in card), Settings
   (tracking toggles flip detection both ways, search finds a place and opens the picker at it),
-  editor sheet (name + 20–100 m slider + Save & Activate), full save flow (DB row + instant
+  editor sheet (radius slider + Save & Activate; zones auto-numbered), full save flow (DB row + instant
   check-in), and both Room migrations on real data (v1 → v2 → v3, rows preserved). No crashes.
   Test residue left on the emulator: an `Al-Noor` mosque + its open check-in (delete from
   Settings if unwanted).
@@ -576,11 +794,12 @@ directories the emulator loads from:
 4. Confirm an `attendance_logs` row appears in History with the right method.
 5. Drag test (no walking): press and hold a saved pin and drag it onto your blue dot — the circle
    turns red, a visit row opens and the routine applies; drag it off again — green, visit closed,
-   routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds
-   (§5.25).
+   routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds,
+   and expect the visit to close once you have been outside the circle for a full minute (§5.25,
+   §5.32).
 6. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
-7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the credit
-   under the map changes, then confirm the choice survives an app restart.
+7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the
+   corner credit changes, then confirm the choice survives an app restart.
 8. Reboot the device; confirm monitoring restarts (boot receiver).
 9. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
 10. Emulator, boundary: `.\tools\zone-boundary-sweep.ps1 -Mosque "<name>" -WatchArrival` must report
@@ -594,9 +813,10 @@ directories the emulator loads from:
 1. Haversine computed in Kotlin, not SQLite (§5.3).
 2. Local `ImageVector` icon set instead of the frozen `material-icons-*` artifacts (§5.4).
 3. `org.jetbrains.kotlin.android` intentionally not applied (AGP 9 built-in Kotlin) (§5.1).
-4. Tier 1 uses Play Services `GeofencingClient` because AOSP has no first-party geofence API (§5.6).
+4. The geofence step uses Play Services `GeofencingClient` because AOSP has no first-party geofence API (§5.6).
 5. The editor sheet has no mini-map: the green circle drawn on the main map behind the sheet *is*
-   the live radius preview (and the exact geofence that gets armed).
+   the live radius preview (and the exact geofence that gets armed). That is also why the sheet
+   fades to 5% (slider at 50%) while the radius thumb is held — the preview must stay visible.
 6. Below API 33 the callback `Geocoder` API does not exist, so place search uses the blocking
    `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there; API 33+ uses
    the listener version. No API key or extra dependency either way.
@@ -605,8 +825,8 @@ directories the emulator loads from:
    deep enough (high-latitude summer), Fajr/Isha fall back to the seventh-of-night rule.
 8. `MUTE_SYSTEM` is skipped when a ring-mode action is armed (§5.20) — the ring mode already mutes
    the streams it governs, and writing them separately lets the platform re-derive the ring mode.
-   Actions Android reserves for the system are not built at all; they are listed in
-   `RoutineAction.BLOCKED_ACTIONS` and shown in Settings with the reason.
+   Actions Android reserves for the system are not built at all: the editor offers only switches the
+   app is allowed to flip, so nothing armed can silently fail to run.
 
 Network sync of attendance is intentionally **out of scope** for the MVP; the schema and repositories
 are local-only and a sync layer can be added later without changing the tables.

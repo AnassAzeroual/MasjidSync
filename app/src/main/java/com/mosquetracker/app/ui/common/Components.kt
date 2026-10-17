@@ -14,6 +14,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +77,51 @@ fun KeyValueRow(
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+/**
+ * A problem the user can fix with one tap: a missing permission, detection switched off while
+ * inside a zone, an armed action that cannot run.
+ */
+@Composable
+fun AlertBanner(
+    title: String,
+    message: String,
+    actionText: String,
+    onAction: () -> Unit,
+    modifier: Modifier = Modifier,
+    secondaryText: String? = null,
+    onSecondary: () -> Unit = {},
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                if (secondaryText != null) {
+                    TextButton(onClick = onSecondary) { Text(secondaryText) }
+                }
+                TextButton(onClick = onAction) { Text(actionText) }
+            }
+        }
     }
 }
 

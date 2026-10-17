@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mosquetracker.app.model.MapLayer
@@ -31,6 +32,8 @@ class SettingsStore @Inject constructor(
         val MAP_LAYER = stringPreferencesKey("map_layer")
         val ROUTINE_ACTIONS = stringPreferencesKey("routine_actions")
         val ROUTINE_SNAPSHOT = stringPreferencesKey("routine_snapshot")
+        val ROUTINE_SUPPRESSED = booleanPreferencesKey("routine_suppressed")
+        val PRAYER_WINDOW_END = longPreferencesKey("prayer_window_end")
         val PRAYER_SILENT_ENABLED = booleanPreferencesKey("prayer_silent_enabled")
         val PRAYER_BUFFER_MINUTES = intPreferencesKey("prayer_buffer_minutes")
         val PRAYER_CACHE_DATE = stringPreferencesKey("prayer_cache_date")
@@ -150,6 +153,25 @@ class SettingsStore @Inject constructor(
             prefs[Keys.ROUTINE_SNAPSHOT]?.let(RoutineSnapshot::fromJson)
         }
 
+    /**
+     * Set by "Restore now" while a visit or prayer window still wants the routine, so the next
+     * trigger does not undo the user's choice. Cleared when nothing wants the routine any more.
+     */
+    suspend fun isRoutineSuppressed(): Boolean =
+        context.dataStore.data.first()[Keys.ROUTINE_SUPPRESSED] ?: false
+
+    suspend fun setRoutineSuppressed(suppressed: Boolean) {
+        context.dataStore.edit { it[Keys.ROUTINE_SUPPRESSED] = suppressed }
+    }
+
+    /** End of the prayer-silence window in progress (epoch millis), or 0 when none is open. */
+    suspend fun prayerWindowEnd(): Long =
+        context.dataStore.data.first()[Keys.PRAYER_WINDOW_END] ?: 0L
+
+    suspend fun setPrayerWindowEnd(epochMillis: Long) {
+        context.dataStore.edit { it[Keys.PRAYER_WINDOW_END] = epochMillis }
+    }
+
     val prayerSilentEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.PRAYER_SILENT_ENABLED] ?: false }
 
@@ -191,6 +213,10 @@ data class RoutineSnapshot(
     val screenTimeout: Int = UNSET,
     val autoRotate: Int = UNSET,
     val flashlight: Boolean = false,
+    /** Do Not Disturb access at the last apply; a later grant is a reason to apply again. */
+    val dndGranted: Boolean = false,
+    /** "Modify system settings" at the last apply, for the same reason. */
+    val writeSettingsGranted: Boolean = false,
 ) {
     /** True while at least one changed setting is still waiting to be restored. */
     fun hasPendingRestore(): Boolean =
@@ -255,6 +281,8 @@ data class RoutineSnapshot(
         put(KEY_SCREEN_TIMEOUT, screenTimeout)
         put(KEY_AUTO_ROTATE, autoRotate)
         put(KEY_FLASHLIGHT, flashlight)
+        put(KEY_DND_GRANTED, dndGranted)
+        put(KEY_WRITE_SETTINGS_GRANTED, writeSettingsGranted)
     }.toString()
 
     companion object {
@@ -272,6 +300,8 @@ data class RoutineSnapshot(
         private const val KEY_SCREEN_TIMEOUT = "screen_timeout"
         private const val KEY_AUTO_ROTATE = "auto_rotate"
         private const val KEY_FLASHLIGHT = "flashlight"
+        private const val KEY_DND_GRANTED = "dnd_granted"
+        private const val KEY_WRITE_SETTINGS_GRANTED = "write_settings_granted"
 
         fun fromJson(raw: String): RoutineSnapshot? = runCatching {
             val json = JSONObject(raw)
@@ -290,6 +320,8 @@ data class RoutineSnapshot(
                 screenTimeout = json.optInt(KEY_SCREEN_TIMEOUT, UNSET),
                 autoRotate = json.optInt(KEY_AUTO_ROTATE, UNSET),
                 flashlight = json.optBoolean(KEY_FLASHLIGHT, false),
+                dndGranted = json.optBoolean(KEY_DND_GRANTED, false),
+                writeSettingsGranted = json.optBoolean(KEY_WRITE_SETTINGS_GRANTED, false),
             )
         }.getOrNull()
     }

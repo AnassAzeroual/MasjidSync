@@ -74,7 +74,13 @@ class RoutineEngine @Inject constructor(
             fresh = fresh,
             skipSystemVolume = existing.actions.any(RoutineAction.RINGER_ACTION_NAMES::contains),
         ) ?: fresh
-        settingsStore.writeRoutineSnapshot(snapshot.copy(actions = wanted.mapTo(mutableSetOf()) { it.name }))
+        settingsStore.writeRoutineSnapshot(
+            snapshot.copy(
+                actions = wanted.mapTo(mutableSetOf()) { it.name },
+                dndGranted = dndAccessGranted,
+                writeSettingsGranted = writeSettingsGranted,
+            ),
+        )
 
         val changed = applyOnArrival(wanted)
         // Nothing landed (all access revoked, or no hardware): do not leave a false snapshot behind.
@@ -84,7 +90,8 @@ class RoutineEngine @Inject constructor(
 
     /**
      * Runs [actions]' on-exit half. Only the parts the user left enabled are restored; anything
-     * still pending stays in the snapshot so [restoreNow] can finish the job later.
+     * still pending stays in the snapshot so [restoreNow] can finish the job later. The restored
+     * parts also leave the snapshot's applied list, so a later apply knows to run them again.
      */
     suspend fun revert(actions: Set<RoutineAction>): Boolean {
         val snapshot = settingsStore.readRoutineSnapshot() ?: return false
@@ -94,6 +101,7 @@ class RoutineEngine @Inject constructor(
         if (RoutineAction.RESTORE_SOUND in wanted) {
             restoreSound(snapshot)
             remaining = remaining.copy(
+                actions = remaining.actions - SOUND_ACTION_NAMES,
                 ringerMode = RoutineSnapshot.UNSET,
                 musicVolume = RoutineSnapshot.UNSET,
                 alarmVolume = RoutineSnapshot.UNSET,
@@ -105,6 +113,7 @@ class RoutineEngine @Inject constructor(
         if (RoutineAction.RESTORE_DEVICE in wanted) {
             restoreDevice(snapshot)
             remaining = remaining.copy(
+                actions = remaining.actions - DEVICE_ACTION_NAMES,
                 brightness = RoutineSnapshot.UNSET,
                 brightnessMode = RoutineSnapshot.UNSET,
                 screenTimeout = RoutineSnapshot.UNSET,
@@ -136,12 +145,13 @@ class RoutineEngine @Inject constructor(
         var changed = false
 
         val audio = audioManager
+        val ringTarget = audio?.let { ringTarget(wanted, dndAccessGranted, it.ringerMode) }
 
         // On this platform STREAM_SYSTEM is one of the streams the ring mode governs, so writing
         // it re-derives the ring mode from the volume policy a moment later and can quietly undo
-        // a silent ringer. When a ring-mode action is armed it already mutes those streams, so the
+        // a silent ringer. When a ring-mode change is coming it already mutes those streams, so the
         // separate write is both redundant and harmful — the ring mode stays the last word.
-        val ringModeArmed = RoutineAction.RINGER_ACTIONS.any { it in wanted } && dndAccessGranted
+        val ringModeArmed = ringTarget != null
 
         // Volumes first: they are the cheap, order-independent part.
         if (audio != null) {
@@ -218,14 +228,8 @@ class RoutineEngine @Inject constructor(
         // several builds — makes AudioService re-derive the ring mode from its volume policy a
         // moment later, which would quietly undo a silent ringer. Setting it here, then checking
         // again after the platform has settled, keeps the user's choice the one that sticks.
-        if (audio != null && dndAccessGranted) {
-            // Silent beats vibrate when the user arms both.
-            val target = when {
-                RoutineAction.SILENT_RINGER in wanted -> AudioManager.RINGER_MODE_SILENT
-                RoutineAction.VIBRATE_RINGER in wanted -> AudioManager.RINGER_MODE_VIBRATE
-                else -> null
-            }
-            if (target != null && setRingModeAndSettle(audio, target)) changed = true
+        if (audio != null && ringTarget != null && setRingModeAndSettle(audio, ringTarget)) {
+            changed = true
         }
 
         return changed
@@ -313,8 +317,9 @@ class RoutineEngine @Inject constructor(
 
     private fun captureSnapshot(actions: Set<RoutineAction>): RoutineSnapshot {
         val audio = audioManager
+        val ringChange = audio != null && ringTarget(actions, dndAccessGranted, audio.ringerMode) != null
         return RoutineSnapshot(
-            ringerMode = if (RoutineAction.RINGER_ACTIONS.any { it in actions } && dndAccessGranted) {
+            ringerMode = if (ringChange) {
                 audio?.ringerMode ?: RoutineSnapshot.UNSET
             } else {
                 RoutineSnapshot.UNSET
@@ -326,8 +331,8 @@ class RoutineEngine @Inject constructor(
                 RoutineAction.MUTE_NOTIFICATION,
                 AudioManager.STREAM_NOTIFICATION,
             ),
-            // Skipped for the same reason the apply skips it: the ring-mode action owns this stream.
-            systemVolume = if (RoutineAction.RINGER_ACTIONS.any { it in actions } && dndAccessGranted) {
+            // Skipped for the same reason the apply skips it: the ring-mode change owns this stream.
+            systemVolume = if (ringChange) {
                 RoutineSnapshot.UNSET
             } else {
                 captureVolume(actions, RoutineAction.MUTE_SYSTEM, AudioManager.STREAM_SYSTEM)
@@ -401,17 +406,47 @@ class RoutineEngine @Inject constructor(
             context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
 
-    private companion object {
+    companion object {
         /** Very dim, but never fully black — the user must still be able to read the screen. */
-        const val MIN_BRIGHTNESS = 24
-        const val SHORT_TIMEOUT_MILLIS = 15_000
-        const val ROTATION_OFF = 0
-        const val PULSE_MILLIS = 400L
+        private const val MIN_BRIGHTNESS = 24
+        private const val SHORT_TIMEOUT_MILLIS = 15_000
+        private const val ROTATION_OFF = 0
+        private const val PULSE_MILLIS = 400L
 
         /** How many times the ring mode is written before giving up on it sticking. */
-        const val RING_MODE_ATTEMPTS = 3
+        private const val RING_MODE_ATTEMPTS = 3
 
         /** Gap allowed for the platform to re-derive the ring mode before it is checked again. */
-        const val RING_MODE_SETTLE_MILLIS = 250L
+        private const val RING_MODE_SETTLE_MILLIS = 250L
+
+        private val SOUND_ACTION_NAMES: Set<String> =
+            RoutineAction.SOUND_PROFILE.mapTo(mutableSetOf()) { it.name }
+
+        private val DEVICE_ACTION_NAMES: Set<String> = setOf(
+            RoutineAction.FLASHLIGHT_ON,
+            RoutineAction.MIN_BRIGHTNESS,
+            RoutineAction.SHORT_SCREEN_TIMEOUT,
+            RoutineAction.LOCK_ROTATION,
+        ).mapTo(mutableSetOf()) { it.name }
+
+        /**
+         * The ring mode the routine should set, or null when it should leave the ring mode alone.
+         *
+         * Silent beats vibrate when both are armed. Without Do Not Disturb access Android refuses
+         * any change into or out of silent (the platform treats it as a DND toggle), but still
+         * allows normal ↔ vibrate. So "Silent ringer" falls back to vibrate — calls stop ringing
+         * instead of the arrival quietly doing nothing to the ringer — and a phone that is already
+         * silent is left exactly as it is.
+         */
+        fun ringTarget(wanted: Set<RoutineAction>, dndGranted: Boolean, currentMode: Int): Int? {
+            val silent = RoutineAction.SILENT_RINGER in wanted
+            val vibrate = RoutineAction.VIBRATE_RINGER in wanted
+            if (!silent && !vibrate) return null
+            if (dndGranted) {
+                return if (silent) AudioManager.RINGER_MODE_SILENT else AudioManager.RINGER_MODE_VIBRATE
+            }
+            if (currentMode == AudioManager.RINGER_MODE_SILENT) return null
+            return AudioManager.RINGER_MODE_VIBRATE
+        }
     }
 }
