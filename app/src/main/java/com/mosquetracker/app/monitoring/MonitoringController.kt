@@ -5,6 +5,7 @@ import com.google.android.gms.location.Geofence
 import com.mosquetracker.app.data.prefs.SettingsStore
 import com.mosquetracker.app.data.repository.MosqueRepository
 import com.mosquetracker.app.detection.GeofenceManager
+import com.mosquetracker.app.model.LocationSample
 import com.mosquetracker.app.service.DetectionForegroundService
 import com.mosquetracker.app.work.MonitoringScheduler
 import com.mosquetracker.app.work.VerificationWorker
@@ -57,12 +58,16 @@ class MonitoringController @Inject constructor(
      * geofence to round-trip we run the entry check once now — the user gets an immediate answer.
      * The check itself is the same pipeline the background path uses, so it cannot produce a
      * result the background path would not.
+     *
+     * [fix] is the reading that was on screen when the mosque was saved. Carrying it makes the
+     * check deterministic: the fix that turned the picker's circle red is the one that records
+     * the visit, instead of a reading taken again a moment later.
      */
-    suspend fun onMosqueAdded(mosqueId: Long, enableAlerts: Boolean) {
+    suspend fun onMosqueAdded(mosqueId: Long, enableAlerts: Boolean, fix: LocationSample? = null) {
         if (enableAlerts) enableMonitoring()
         if (!settingsStore.isMonitoringEnabled()) return
         refreshGeofences()
-        VerificationWorker.enqueue(context, mosqueId, Geofence.GEOFENCE_TRANSITION_ENTER)
+        VerificationWorker.enqueue(context, mosqueId, Geofence.GEOFENCE_TRANSITION_ENTER, fix)
     }
 
     suspend fun removeGeofence(mosqueId: Long) {

@@ -1,17 +1,24 @@
 package com.mosquetracker.app.ui.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.data.prefs.SettingsStore
+import com.mosquetracker.app.data.repository.AttendanceRepository
 import com.mosquetracker.app.data.repository.MosqueRepository
+import com.mosquetracker.app.detection.DetectionPipeline
+import com.mosquetracker.app.detection.Haversine
+import com.mosquetracker.app.detection.ZoneWatch
 import com.mosquetracker.app.location.LocationProvider
 import com.mosquetracker.app.model.LocationSample
 import com.mosquetracker.app.model.MapLayer
 import com.mosquetracker.app.monitoring.MonitoringController
 import com.mosquetracker.app.ui.common.MosquePickRequest
 import com.mosquetracker.app.ui.common.PickRequest
+import com.mosquetracker.app.work.VerificationWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,10 +31,13 @@ import javax.inject.Inject
 /** Backs the Home map: status, saved pins, the zone picker and the editor sheet. */
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val mosqueRepository: MosqueRepository,
+    private val attendanceRepository: AttendanceRepository,
     private val monitoringController: MonitoringController,
     private val locationProvider: LocationProvider,
     private val settingsStore: SettingsStore,
+    private val zoneWatch: ZoneWatch,
     private val pickRequest: MosquePickRequest,
 ) : ViewModel() {
 
@@ -73,12 +83,76 @@ class HomeViewModel @Inject constructor(
         locationJob = viewModelScope.launch {
             locationProvider.locationUpdates().collect { sample ->
                 _currentLocation.value = sample
-                _nearest.value = mosqueRepository.nearestWithin(
-                    latitude = sample.latitude,
-                    longitude = sample.longitude,
-                    searchRadiusMeters = NEARBY_SEARCH_RADIUS_METERS,
+                _nearest.value = nearestTo(sample.latitude, sample.longitude)
+                // The map decides "red or green" from every fix; the watch makes the arrival, the
+                // visit row and the routine follow those same readings instead of one fence
+                // decision taken with a different one. Same master switch as the background
+                // machinery: detection off means detection off.
+                if (settingsStore.isMonitoringEnabled()) zoneWatch.onFix(sample)
+            }
+        }
+    }
+
+    /**
+     * Recomputes the nearest mosque from the latest fix. Called after a pin is moved, so the pill
+     * answers immediately rather than waiting for the next location update.
+     */
+    fun refreshNearest() {
+        val fix = _currentLocation.value ?: return
+        viewModelScope.launch { _nearest.value = nearestTo(fix.latitude, fix.longitude) }
+    }
+
+    private suspend fun nearestTo(latitude: Double, longitude: Double) =
+        mosqueRepository.nearestWithin(
+            latitude = latitude,
+            longitude = longitude,
+            searchRadiusMeters = NEARBY_SEARCH_RADIUS_METERS,
+        )
+
+    /**
+     * Persists a mosque pin the user dragged to a new place.
+     *
+     * Two things have to follow the row. The geofence is re-registered, because the old circle is
+     * now in the wrong place. And since a re-registered fence only ever produces an ENTER
+     * (`INITIAL_TRIGGER_ENTER`), a mosque dragged off a phone that was inside it would otherwise
+     * leave the routine armed with no EXIT to lift it — so the matching verification pass runs
+     * here too. The EXIT one is guarded on an open visit, which is what keeps a dragged pin from
+     * lifting a routine that belongs to a different mosque.
+     */
+    fun moveMosque(mosque: MosqueEntity, latitude: Double, longitude: Double) {
+        viewModelScope.launch {
+            mosqueRepository.update(mosque.copy(latitude = latitude, longitude = longitude))
+            monitoringController.onMosquesChanged()
+
+            val fix = _currentLocation.value
+            val distance = fix?.let {
+                Haversine.distanceMeters(it.latitude, it.longitude, latitude, longitude)
+            }
+            // See DetectionPipeline.moveTransition for why the app runs this pass itself.
+            val transition = distance?.let { moved ->
+                DetectionPipeline.moveTransition(
+                    distanceMeters = moved,
+                    configuredRadiusMeters = mosque.geofenceRadius,
+                    hasOpenVisit = attendanceRepository.hasOpenVisit(mosque.id),
                 )
             }
+            if (transition != null) {
+                // The fix that just decided the move is the fix that verifies it.
+                VerificationWorker.enqueue(context, mosque.id, transition, fix)
+            }
+
+            val radius = DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius).toInt()
+            val inside = distance != null &&
+                DetectionPipeline.isInsideZone(distance, mosque.geofenceRadius)
+            _message.value = when {
+                distance == null -> "Moved ${mosque.name}."
+                inside -> "Moved ${mosque.name} — %.0f m from the centre, inside its $radius m zone."
+                    .format(distance)
+
+                else -> "Moved ${mosque.name} — %.0f m away, outside its $radius m zone."
+                    .format(distance)
+            }
+            refreshNearest()
         }
     }
 
@@ -109,7 +183,13 @@ class HomeViewModel @Inject constructor(
                 ),
             )
 
-            monitoringController.onMosqueAdded(id, enableAlerts = enableAlerts)
+            monitoringController.onMosqueAdded(
+                mosqueId = id,
+                enableAlerts = enableAlerts,
+                // The reading that was on screen: saving the mosque you are standing in should
+                // log the visit from that fix, not from one taken again a moment later.
+                fix = _currentLocation.value,
+            )
             _message.value = if (enableAlerts) {
                 "Saved ${name.trim()}. You'll be notified when you're inside."
             } else {

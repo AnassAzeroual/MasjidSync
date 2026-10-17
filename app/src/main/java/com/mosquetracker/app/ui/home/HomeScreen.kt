@@ -1,5 +1,7 @@
 package com.mosquetracker.app.ui.home
 
+import android.graphics.Point
+import android.view.MotionEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +37,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -68,6 +72,7 @@ import com.mosquetracker.app.ui.common.RequiredPermissions
 import com.mosquetracker.app.ui.common.ScreenScaffold
 import com.mosquetracker.app.ui.common.rememberPermissionLauncher
 import com.mosquetracker.app.ui.common.rememberPermissionsGranted
+import com.mosquetracker.app.ui.theme.DangerRed
 import kotlinx.coroutines.delay
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.events.MapListener
@@ -112,6 +117,15 @@ private val TrackedZoneStrokeColor = 0x990B5D33.toInt()
 private const val TrackedZoneStrokeWidthPx = 2f
 
 /**
+ * A tracked zone the phone is currently standing in. Red rather than the green wash, so "this is
+ * the one that just silenced your phone" is readable from across the room; it uses the palette's
+ * [DangerRed], the same colour the theme hands to `colorScheme.error`.
+ */
+private val ZoneInsideFillColor = DangerRed.copy(alpha = 0.20f).toArgb()
+private val ZoneInsideStrokeColor = DangerRed.toArgb()
+private const val ZoneInsideStrokeWidthPx = 3f
+
+/**
  * "You are here" accuracy halo: light blue so it never reads as one of the green detection zones,
  * and pale enough that a mosque circle drawn over it stays legible.
  */
@@ -154,6 +168,11 @@ fun HomeScreen(
     val launcher = rememberPermissionLauncher { viewModel.startLocationUpdates() }
 
     var selectedMosqueId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    // Pin being dragged right now: which mosque, and where the finger has taken it. The zone
+    // follows it live and the change is only persisted when the drag ends, so an abandoned drag
+    // leaves no trace.
+    var draggedZone by remember { mutableStateOf<Pair<Long, GeoPoint>?>(null) }
 
     // ----- zone picker ------------------------------------------------------
     var picking by rememberSaveable { mutableStateOf(false) }
@@ -349,10 +368,24 @@ fun HomeScreen(
     }
 
     // Dragging the pin is the other half of "tap to place": both end up setting the same state.
+    // Where the finger went down is remembered too, so a grabbed pin can cancel the jump osmdroid
+    // applies on pickup (see [keepGrabOffsetOnDrag]). The listener returns false, so the map still
+    // handles the gesture itself.
+    var lastTouchY by remember { mutableFloatStateOf(0f) }
+    DisposableEffect(mapView) {
+        mapView.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) lastTouchY = event.y
+            false
+        }
+        onDispose { mapView.setOnTouchListener(null) }
+    }
+
     DisposableEffect(pickerMarker) {
         pickerMarker.setOnMarkerDragListener(
             object : Marker.OnMarkerDragListener {
-                override fun onMarkerDragStart(marker: Marker) = Unit
+                override fun onMarkerDragStart(marker: Marker) {
+                    marker.keepGrabOffsetOnDrag(lastTouchY, mapView)
+                }
 
                 override fun onMarkerDrag(marker: Marker) {
                     pickLat = marker.position.latitude
@@ -370,9 +403,12 @@ fun HomeScreen(
     }
 
     // Saved pins and their zone washes, or the picker pin and its circle, all live in one
-    // overlay list, so it is rebuilt whenever the set of things to draw changes.
+    // overlay list, so it is rebuilt whenever the set of things to draw changes. The zones are
+    // kept by mosque id so a drag can re-point one without rebuilding the list under the finger.
+    val zonePolygons = remember { mutableMapOf<Long, Polygon>() }
     LaunchedEffect(mosques, picking) {
         mapView.overlays.clear()
+        zonePolygons.clear()
         // Added first on purpose: osmdroid offers a tap to the *last* overlay first, so the event
         // catcher has to sit underneath the markers for them to keep their own gestures.
         mapView.overlays.add(tapOverlay)
@@ -385,17 +421,17 @@ fun HomeScreen(
         } else {
             mosques.forEach { mosque ->
                 if (mosque.trackingEnabled) {
-                    mapView.overlays.add(
-                        Polygon(mapView).apply {
-                            points = Polygon.pointsAsCircle(
-                                GeoPoint(mosque.latitude, mosque.longitude),
-                                DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius),
-                            )
-                            fillPaint.color = TrackedZoneFillColor
-                            outlinePaint.color = TrackedZoneStrokeColor
-                            outlinePaint.strokeWidth = TrackedZoneStrokeWidthPx
-                        },
-                    )
+                    val zone = Polygon(mapView).apply {
+                        points = Polygon.pointsAsCircle(
+                            GeoPoint(mosque.latitude, mosque.longitude),
+                            DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius),
+                        )
+                        fillPaint.color = TrackedZoneFillColor
+                        outlinePaint.color = TrackedZoneStrokeColor
+                        outlinePaint.strokeWidth = TrackedZoneStrokeWidthPx
+                    }
+                    zonePolygons[mosque.id] = zone
+                    mapView.overlays.add(zone)
                 }
                 mapView.overlays.add(
                     Marker(mapView).apply {
@@ -412,12 +448,66 @@ fun HomeScreen(
                             selectedMosqueId = mosque.id
                             true
                         }
+                        // A saved pin can be dragged to move the mosque. It also has to be
+                        // draggable for the map's long-press (drop a new pin here) to stay away:
+                        // the marker consumes the press first.
+                        setDraggable(true)
+                        setOnMarkerDragListener(
+                            object : Marker.OnMarkerDragListener {
+                                override fun onMarkerDragStart(marker: Marker) {
+                                    selectedMosqueId = null
+                                    marker.keepGrabOffsetOnDrag(lastTouchY, mapView)
+                                    draggedZone = mosque.id to marker.position
+                                }
+
+                                override fun onMarkerDrag(marker: Marker) {
+                                    draggedZone = mosque.id to marker.position
+                                }
+
+                                override fun onMarkerDragEnd(marker: Marker) {
+                                    val centre = marker.position
+                                    // Cleared before the save lands: the row is the source of truth
+                                    // again as soon as Room reports it back.
+                                    draggedZone = null
+                                    viewModel.moveMosque(
+                                        mosque = mosque,
+                                        latitude = centre.latitude,
+                                        longitude = centre.longitude,
+                                    )
+                                }
+                            },
+                        )
                     },
                 )
             }
         }
         // Added last, so "where am I" is drawn over the pins rather than under them.
         mapView.overlays.add(locationDot)
+        mapView.invalidate()
+    }
+
+    // Zone colour, on every new fix and on every frame of a drag: red for the zone the phone is
+    // inside, the quiet green wash otherwise. The circle is what says "this mosque has you".
+    LaunchedEffect(location, mosques, draggedZone) {
+        if (picking) return@LaunchedEffect
+        val fix = location
+        val dragged = draggedZone
+        mosques.forEach { mosque ->
+            val zone = zonePolygons[mosque.id] ?: return@forEach
+            val inDrag = dragged != null && dragged.first == mosque.id
+            val centre = if (inDrag) dragged.second else GeoPoint(mosque.latitude, mosque.longitude)
+            val inside = fix != null && DetectionPipeline.isInsideZone(
+                Haversine.distanceMeters(fix.latitude, fix.longitude, centre.latitude, centre.longitude),
+                mosque.geofenceRadius,
+            )
+            applyZoneStyle(zone, inside)
+            if (inDrag) {
+                zone.points = Polygon.pointsAsCircle(
+                    centre,
+                    DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius),
+                )
+            }
+        }
         mapView.invalidate()
     }
 
@@ -464,6 +554,31 @@ fun HomeScreen(
     }
     val insideZone = distanceToCentre != null &&
         DetectionPipeline.isInsideZone(distanceToCentre, pickRadius)
+
+    // While a zone is being placed the circle says the same thing the saved ones do: red once the
+    // phone is standing in it.
+    LaunchedEffect(picking, insideZone) {
+        if (!picking) return@LaunchedEffect
+        applyZoneStyle(pickerCircle, insideZone, ZoneFillColor, ZoneStrokeColor, ZoneStrokeWidthPx)
+        mapView.invalidate()
+    }
+
+    // Live read-out for the pin under the finger (and the reason the zone can be dragged until it
+    // touches the blue dot and then away again, watching the answer flip).
+    val dragged = draggedZone
+    val draggedMosque = dragged?.let { (id, _) -> mosques.firstOrNull { it.id == id } }
+    val draggedDistance = if (dragged != null && fix != null) {
+        Haversine.distanceMeters(
+            fix.latitude,
+            fix.longitude,
+            dragged.second.latitude,
+            dragged.second.longitude,
+        )
+    } else {
+        null
+    }
+    val draggedInside = draggedDistance != null && draggedMosque != null &&
+        DetectionPipeline.isInsideZone(draggedDistance, draggedMosque.geofenceRadius)
 
     val nearestMosque = nearest?.first
     val nearestDistance = nearest?.second
@@ -573,8 +688,19 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // Inside/Outside pill, floating over the top of the map.
-            if (!picking) {
+            // Inside/Outside pill, floating over the top of the map. It gives way to the live
+            // read-out while a pin is being dragged, so the two can never disagree mid-gesture.
+            if (draggedMosque != null && draggedDistance != null) {
+                DragReadout(
+                    mosqueName = draggedMosque.name,
+                    distanceMeters = draggedDistance,
+                    radiusMeters = DetectionPipeline.zoneRadiusMeters(draggedMosque.geofenceRadius).toInt(),
+                    inside = draggedInside,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp),
+                )
+            } else if (!picking) {
                 ZonePill(
                     inside = inside,
                     hasFix = fix != null,
@@ -620,7 +746,14 @@ fun HomeScreen(
                 } else if (picking && !editingMarker) {
                     HintCard(
                         title = "Position the mosque",
-                        message = "Drag the pin or tap the map to move it. Tap the pin to name it and size the circle. Tip: touch and hold any spot to drop a new pin there.",
+                        message = "Touch and hold the pin, then drag it — or tap the map — to move the zone. Tap the pin to name it and size the circle. Tip: touch and hold any empty spot to drop a new pin there.",
+                        liveText = distanceToCentre?.let { distance ->
+                            "%s — %d m from the centre".format(
+                                if (insideZone) "You are inside this zone" else "You are outside this zone",
+                                distance.toInt(),
+                            )
+                        },
+                        liveInside = insideZone,
                     )
                 } else {
                     message?.let { text -> MessageCard(text) }
@@ -670,7 +803,7 @@ private fun ZonePill(inside: Boolean, hasFix: Boolean, modifier: Modifier = Modi
         shape = RoundedCornerShape(50),
         color = when {
             !hasFix -> MaterialTheme.colorScheme.surfaceVariant
-            inside -> MaterialTheme.colorScheme.primary
+            inside -> MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.surfaceVariant
         },
         shadowElevation = 4.dp,
@@ -684,10 +817,53 @@ private fun ZonePill(inside: Boolean, hasFix: Boolean, modifier: Modifier = Modi
             style = MaterialTheme.typography.titleMedium,
             color = when {
                 !hasFix -> MaterialTheme.colorScheme.onSurfaceVariant
-                inside -> MaterialTheme.colorScheme.onPrimary
+                inside -> MaterialTheme.colorScheme.onError
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+        )
+    }
+}
+
+/**
+ * Read-out shown while a mosque pin is under the finger: the zone is following the drag, this says
+ * what that does to the phone's position right now. It is the same comparison the arrival check
+ * makes, so holding the pin until the text flips is holding it at the exact boundary.
+ */
+@Composable
+private fun DragReadout(
+    mosqueName: String,
+    distanceMeters: Double,
+    radiusMeters: Int,
+    inside: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(50),
+        color = if (inside) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        shadowElevation = 4.dp,
+    ) {
+        Text(
+            text = "%.0f m from %s · %s the %d m zone".format(
+                distanceMeters,
+                mosqueName,
+                if (inside) "inside" else "outside",
+                radiusMeters,
+            ),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (inside) {
+                MaterialTheme.colorScheme.onError
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
     }
 }
@@ -809,7 +985,7 @@ private fun MosqueEditorSheet(
                 )
             }
             Text(
-                text = "The green circle on the map updates live as you drag.",
+                text = "The circle on the map updates live as you drag — red while you are standing inside it.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -867,6 +1043,12 @@ private fun MosqueDetailsCard(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary,
                         )
+                    } else {
+                        Text(
+                            text = "Press and hold the pin, then drag to move this mosque.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 IconButton(onClick = onDelete) {
@@ -895,7 +1077,7 @@ private fun MessageCard(text: String) {
 }
 
 @Composable
-private fun HintCard(title: String, message: String) {
+private fun HintCard(title: String, message: String, liveText: String? = null, liveInside: Boolean = false) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -907,6 +1089,17 @@ private fun HintCard(title: String, message: String) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium)
+            if (liveText != null) {
+                Text(
+                    text = liveText,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (liveInside) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -914,6 +1107,23 @@ private fun HintCard(title: String, message: String) {
             )
         }
     }
+}
+
+/**
+ * Styles a zone circle: red while the phone is inside it, [restingFill]/[restingStroke] otherwise.
+ * The paints are the supported way to style a polygon in osmdroid 6.1.x — `setFillColor`,
+ * `setStrokeColor` and `setStrokeWidth` are deprecated.
+ */
+private fun applyZoneStyle(
+    polygon: Polygon,
+    inside: Boolean,
+    restingFill: Int = TrackedZoneFillColor,
+    restingStroke: Int = TrackedZoneStrokeColor,
+    restingWidth: Float = TrackedZoneStrokeWidthPx,
+) {
+    polygon.fillPaint.color = if (inside) ZoneInsideFillColor else restingFill
+    polygon.outlinePaint.color = if (inside) ZoneInsideStrokeColor else restingStroke
+    polygon.outlinePaint.strokeWidth = if (inside) ZoneInsideStrokeWidthPx else restingWidth
 }
 
 @Composable
@@ -984,6 +1194,22 @@ private fun rememberMosqueMapView(initialLayer: MapLayer): MapView {
 }
 
 private fun LocationSample.toGeoPoint(): GeoPoint = GeoPoint(latitude, longitude)
+
+/**
+ * Keeps a dragged pin under the finger that picked it up.
+ *
+ * When a drag starts, osmdroid drops the marker's anchor straight onto the touch point
+ * (`Marker.moveToEventPosition`), so a pin grabbed by its head would jump the height of the pin
+ * the instant it is touched — and, worse, the move that gets saved would be off by that much.
+ * [Marker] subtracts [Marker.getDragOffset] from the touch Y, so passing the negated grab distance
+ * cancels the jump exactly and the pin keeps the offset the finger took hold of. osmdroid converts
+ * that field as millimetres, hence the matching conversion here.
+ */
+private fun Marker.keepGrabOffsetOnDrag(touchY: Float, mapView: MapView) {
+    val anchorY = mapView.projection.toPixels(position, Point()).y
+    val grabOffsetPx = anchorY - touchY
+    dragOffset = -grabOffsetPx * 25.4f / mapView.resources.displayMetrics.xdpi
+}
 
 /** Smallest box containing every point. Callers must pass a non-empty list. */
 private fun boundingBoxOf(points: List<GeoPoint>): BoundingBox {

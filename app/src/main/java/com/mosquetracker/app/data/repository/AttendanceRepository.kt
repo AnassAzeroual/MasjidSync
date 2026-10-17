@@ -5,6 +5,8 @@ import com.mosquetracker.app.data.local.AttendanceWithMosque
 import com.mosquetracker.app.data.local.entity.AttendanceLogEntity
 import com.mosquetracker.app.model.DetectionMethod
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,6 +23,9 @@ class AttendanceRepository @Inject constructor(
 ) {
     val history: Flow<List<AttendanceWithMosque>> = attendanceDao.observeHistory()
 
+    /** Guards the check-then-insert in [recordEntry] while two triggers can race for one visit. */
+    private val entryMutex = Mutex()
+
     fun visitsSince(sinceEpochMillis: Long): Flow<Int> =
         attendanceDao.observeVisitsSince(sinceEpochMillis)
 
@@ -30,13 +35,17 @@ class AttendanceRepository @Inject constructor(
     /**
      * Opens a visit. If one is already open for this mosque the existing row is returned with
      * [EntryResult.isNew] false, so repeated ENTER transitions do not duplicate visits.
+     *
+     * The check and the insert are one step under [entryMutex]: the app can have a geofence event
+     * and a software-watch pass arriving together, and two open rows for one mosque would read as
+     * two visits in the history.
      */
     suspend fun recordEntry(
         mosqueId: Long,
         epochMillis: Long = System.currentTimeMillis(),
         method: DetectionMethod,
-    ): EntryResult {
-        attendanceDao.openLogFor(mosqueId)?.let { return EntryResult(it.id, isNew = false) }
+    ): EntryResult = entryMutex.withLock {
+        attendanceDao.openLogFor(mosqueId)?.let { return@withLock EntryResult(it.id, isNew = false) }
         val id = attendanceDao.insert(
             AttendanceLogEntity(
                 mosqueId = mosqueId,
@@ -44,7 +53,7 @@ class AttendanceRepository @Inject constructor(
                 detectionMethod = method.name,
             ),
         )
-        return EntryResult(id, isNew = true)
+        return@withLock EntryResult(id, isNew = true)
     }
 
     /** Closes every open visit for the mosque and returns how many were closed. */
@@ -56,4 +65,10 @@ class AttendanceRepository @Inject constructor(
         open.forEach { attendanceDao.close(it.id, epochMillis) }
         return open.size
     }
+
+    /**
+     * Whether the app still believes the user is inside this mosque, i.e. a visit is open. Used
+     * when a mosque is moved: an EXIT is only safe to synthesise if there is an arrival to end.
+     */
+    suspend fun hasOpenVisit(mosqueId: Long): Boolean = attendanceDao.openLogFor(mosqueId) != null
 }

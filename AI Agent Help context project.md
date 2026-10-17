@@ -34,7 +34,7 @@ Snapshot at time of writing:
 - SDK: `minSdk 26`, `compileSdk 37`, `targetSdk 37`
 - Toolchain: AGP **9.4.1**, Gradle **9.6.0**, Kotlin (built-in via AGP) **2.2.10**, KSP **2.3.12**,
   Compose BOM **2026.09.00**
-- Status: debug + release builds green, 17 unit tests pass, `lintDebug` exits 0
+- Status: debug + release builds green, 31 unit tests pass, `lintDebug` exits 0
   (only the two informational version-currency warnings).
 - Routine: **editable** (one switch per action, catalogue in `model/RoutineAction.kt`); a full
   armed entry→exit cycle is verified on-device, see §8.
@@ -49,6 +49,30 @@ Snapshot at time of writing:
   pins; hidden until there is a fix and moved on every update. Its accuracy halo only appears when
   the fix is looser than the dot (~30 m) and is dropped above 200 m. Verified on the emulator
   (dot follows mock fixes, leaves and returns with them) and on the S25.
+- Zone boundary: **centre-based rule** (accuracy does not widen the zone, §5.23). Unit-tested in
+  `ZoneBoundaryTest` and measured on the emulator by `tools/zone-boundary-sweep.ps1`: a 100 m mosque
+  reads *Inside* at 90/95/99 m, *Outside* at 101/105/110 m, and a `GEOFENCE` arrival row appeared on
+  entry from 250 m out.
+- Zone colour: the tracked zone whose circle covers the fix is drawn **red** (faint green wash
+  otherwise) and the Home pill turns red with it, so the map, the badge and the arrival check all
+  say the same thing. Same styling while placing a new zone. Verified on the S25 (red circle + red
+  *Inside Zone* pill with the phone inside, green + grey *Outside Zone* after moving it away).
+- Moving a mosque: **press and hold a saved pin, then drag it** — circle follows the finger, a chip
+  reads the live distance / inside-outside, release saves the new position, re-registers the fence
+  and runs the matching verification pass itself (§5.24). Verified on `emulator-5554` (grab offset
+  exact: a 434 px drag landed within 9 m of the predicted distance, in both directions) and on the
+  S25 (dragged onto the phone → red circle, arrival row, routine applied; dragged off → green,
+  visit closed, routine restored).
+- Arrival is **watched** while the app runs: `detection/ZoneWatch.kt` runs
+  `DetectionPipeline.watchTransition` over every fix Home collects, and every trigger carries the
+  fix it was decided on into `VerificationWorker` (dragged pin, fresh save, watch) — the reading
+  that decides an arrival is the reading that records it. Fence events carry none and are verified
+  against `lastKnown()`, then against one freshly requested fix. A visit is released only 25 m past
+  the circle; a software arrival re-registers the fences so the platform owns the matching `EXIT`
+  (§5.25). Verified on `emulator-5554`: 91 m inside a 100 m mosque → *Inside Zone*, row opened,
+  media/alarm/notification muted, arrival notice; 236 m out → row closed and audio restored;
+  **99 m inside a 100 m zone** — the rim case the fence alone used to swallow on the S25 — → row
+  opened and muted. Same build installed on the S25.
 
 ---
 
@@ -111,6 +135,25 @@ restores the user's routine. `monitoring/MonitoringController.kt` owns the foreg
 (**tracked mosques only**), and the 15-minute `GeofenceRefreshWorker`. `detection/BootReceiver.kt`
 restarts monitoring after reboot / app update. Saving a mosque runs the same pipeline immediately
 (`onMosqueAdded`), so the user gets an instant answer.
+
+The zone itself is **centre-based**: `DetectionPipeline.isInsideZone(distance, radius)` compares the
+reported position with the drawn circle and ignores the fix's accuracy, and the OS fence is registered
+with that same radius — so an accuracy circle that merely *touches* the mosque circle is outside, and
+raises no `ENTER` at all. Pinned by `ZoneBoundaryTest` (§6) and measurable on an emulator with
+`tools/zone-boundary-sweep.ps1`.
+
+The same rule paints the map: a tracked zone whose circle covers the fix is drawn **red** (green wash
+otherwise), and the pill and the picker's circle follow it. Moving a saved pin (§5.24) runs the same
+check by hand, because a re-registered fence only ever raises an `ENTER`:
+`DetectionPipeline.moveTransition(distance, radius, hasOpenVisit)` decides which pass, if any, the
+move needs.
+
+What the fence cannot do is *keep* watching. Its reports are single readings taken at single moments,
+so a phone sitting on the rim can lose an arrival to one disagreement and then never hear about that
+mosque again for the visit. `detection/ZoneWatch.kt` therefore re-runs the same inside-test on every
+fix Home collects and carries that fix into the worker, so the reading that decides an arrival is the
+reading that records it; the release side of the watch waits for a 25 m margin. Full reasoning in
+§5.25.
 
 ### The routine (editable If / Then / When-it-ends)
 
@@ -264,6 +307,70 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     resizes the halo. Disabled overlays are skipped by osmdroid for both drawing *and* tap routing,
     which is why the dot also swallows its own taps (`setOnMarkerClickListener { _, _ -> true }`) —
     otherwise a tap on it would open an info bubble or, while picking, place a zone under the dot.
+23. **"Inside" is the reported position inside the drawn circle — accuracy is not part of it.** One
+    function decides it, `DetectionPipeline.isInsideZone(distance, radius)`, and the Home pill, the
+    arrival check and the immediate check on save all route through it, so they cannot disagree (the
+    map's polygon uses `zoneRadiusMeters(radius)`, which only supplies the 50 m fallback for a mosque
+    with no radius). Consequences to keep in mind before "improving" it: a fix whose error circle
+    overlaps the mosque circle while its centre is outside is **outside**; the comparison is inclusive
+    at the boundary (`distance == radius` is inside); and because `GeofenceManager` registers the fence
+    with the *same* radius, Play Services only wakes the app once the position itself crosses it. Any
+    move to the generous `distance <= radius + accuracy` rule must therefore widen the registered
+    fence by the same margin, or the app never hears about the positions it meant to accept. Tested by
+    `ZoneBoundaryTest` (rule, boundary, touch case, pipeline/pill agreement) and end-to-end by
+    `tools/zone-boundary-sweep.ps1`.
+24. **A saved mosque is moved by dragging its pin, and the move runs its own verification pass.**
+    Saved pins are `setDraggable(true)`, and osmdroid starts a marker drag from a **long press**
+    (`Marker.onLongPress` — a fast swipe across a pin does nothing, which is also why the pin has to
+    consume the press: that press otherwise belongs to the map, "drop a new pin here"). Two
+    consequences, both found the hard way:
+    - osmdroid's `moveToEventPosition` **snaps the marker's anchor onto the finger** when the drag
+      starts, so a pin grabbed by its head jumped ~35 px and the coordinates that got saved were off
+      by that much. `HomeScreen.keepGrabOffsetOnDrag` cancels it through `Marker.setDragOffset`
+      (osmdroid converts that field as *millimetres*, hence the `25.4f / xdpi` conversion), fed by
+      the DOWN position the map's own touch listener records.
+    - A re-registered fence only ever raises an `ENTER` (`INITIAL_TRIGGER_ENTER`), so dropping a pin
+      off a phone that was inside it produced no `EXIT` at all and left the routine armed.
+      `HomeViewModel.moveMosque` therefore enqueues the matching `VerificationWorker` pass:
+      `DetectionPipeline.moveTransition(distance, radius, hasOpenVisit)` returns ENTER when the phone
+      is inside the moved circle, EXIT **only** when that mosque has an open visit
+      (`AttendanceRepository.hasOpenVisit`), and null otherwise — without that guard, dragging an
+      unrelated pin would close a visit that never opened and lift a routine that belongs to another
+      mosque. All three branches are pinned in `ZoneBoundaryTest`.
+    - The zone follows the finger live (`zonePolygons[id].points` re-pointed in `onMarkerDrag`) and
+      the drag chip replaces the pill for the duration, so a mid-drag read-out can never contradict
+      the badge above it. `draggedZone` is cleared on drop; the row is the source of truth from then
+      on, and the map rebuilds from it.
+25. **Arrival is level-triggered off the live fixes, and a trigger carries the fix it decided on.**
+    Found on the S25 the hard way: the phone sat 20 cm *inside* a 60 m zone (`gps
+    33.510389,-7.832038`, hAcc ≈ 11 m, centre 59.8 m away), so the map flickered red/grey while
+    nothing ever muted. The fence is why. It reports a crossing the platform believes in, the worker
+    then verified that report against `locationProvider.lastKnown()` — a *different* sample — and a
+    rejection there is silent and final: Play Services has already moved to "inside", so no second
+    `ENTER` arrives for that visit, and no attendance row is written either. Three parts to the fix:
+    - `detection/ZoneWatch.kt` runs `DetectionPipeline.watchTransition(distance, radius,
+      hasOpenVisit)` on every fix Home collects (same master switch as the background machinery), so
+      the arrival follows the readings that paint the circle red. ENTER is the plain inclusive rule
+      with no open visit; EXIT only once the fix is past `RELEASE_MARGIN_METERS` (25 m), so a phone
+      on the rim cannot make the ringer flip. Enqueues are throttled per mosque by a 10 s cooldown.
+    - `VerificationWorker` accepts an optional fix in its input. `HomeViewModel.moveMosque`,
+      `MonitoringController.onMosqueAdded` and the watch all pass the reading they decided on, so the
+      fix that decides an arrival is the fix that records it. Fence events carry none: they are
+      verified against `lastKnown()` and, when that says "outside", against one fix requested freshly
+      (`LocationProvider.current`, one-shot `getCurrentLocation`, 15 s cap — a single request, not a
+      second location stream).
+    - A software arrival re-registers the fences (`onMosquesChanged`) because the platform may still
+      believe the phone is *outside*. Re-registration with `INITIAL_TRIGGER_ENTER` hands the matching
+      `EXIT` back to the OS, which is what lifts the routine when the phone leaves; without it, a
+      visit the watch opened had no exit path at all once the app stopped collecting fixes.
+    `ZoneBoundaryTest` pins the watch's enter/hold/release branches (§6). Verified on `emulator-5554`
+    with `adb emu geo fix`: 91 m inside a 100 m mosque → *Inside Zone*, row 18 opened,
+    media/alarm/notification muted, arrival notice posted, both `VerificationWorker`s SUCCESS; at
+    236 m out → row closed and every stream unmuted; the rim case (99 m inside a 100 m zone) → row 19
+    opened + muted, exactly what used to be swallowed on the phone.
+    Fixed alongside: `AttendanceRepository.recordEntry` guards its check-then-insert with a `Mutex` —
+    two triggers landing together had produced two open rows with identical timestamps (rows 16/17 in
+    the emulator's history).
 
 ---
 
@@ -274,9 +381,27 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 .\gradlew.bat :app:assembleDebug        # debug APK  → app/build/outputs/apk/debug/app-debug.apk
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking → app/build/outputs/apk/release/app-release.apk
-.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (17 tests)
+.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (36 tests)
 .\gradlew.bat :app:lintDebug            # must exit 0
 ```
+
+Unit tests worth knowing: `ZoneBoundaryTest` (the inside/outside rule — boundary, the
+accuracy-touches-but-does-not-count case, that the pipeline agrees with the map's pill, and the
+software watch's enter/hold/release branches; §5.23, §5.25), `HaversineTest`, `GeoUtilsTest`,
+`PrayerQiblaTest`.
+
+Boundary behaviour on a device (emulator only — mock coordinates cannot be injected into a physical
+phone):
+
+```powershell
+.\tools\zone-boundary-sweep.ps1 -List                                    # saved mosques: coords + radius
+.\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor"                        # point tests at radius ± step
+.\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor" -WatchArrival          # + a real geofence arrival
+```
+
+It reads the app database through `run-as` (debug builds only), so the app must be installed and on
+the Home tab. Measured on `emulator-5554` against a 100 m mosque: 90/95/99 m → *Inside*,
+101/105/110 m → *Outside*, and a `GEOFENCE` attendance row appeared after stepping in from 250 m out.
 
 `local.properties` (gitignored) must contain `sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk`.
 
@@ -346,6 +471,17 @@ Static APK verification (no device needed):
   `adb shell cmd notification allow_dnd com.mosquetracker.app.debug`, and WRITE_SETTINGS for the
   display actions, granted via `adb shell appops set com.mosquetracker.app.debug WRITE_SETTINGS allow`
   (the system UI list omits the app, so grant it by shell when testing).
+- **Status (2026-10-17, swallowed arrival on the rim):** the S25 reported "the circle becomes red but
+  the sound is not muted". Diagnosis, with numbers: the phone's fix was
+  `33.510389,-7.832038 hAcc ≈ 10.7 m` and the saved mosque sat at `33.51086,-7.83236` with a 60 m
+  radius — **59.8 m away**, i.e. standing on the line, so the pill flickered while every fence `ENTER`
+  was rejected against a different sample and never retried (root cause and fix: §5.25). Confirmed
+  before the fix with the device DB empty of attendance rows despite the red circle, then fixed and
+  verified on the emulator (§5.25). No DND/WRITE_SETTINGS probe is available for this build through
+  `appops get` (`cmd appops` rejects `ACCESS_NOTIFICATION_POLICY` on SDK 37), so the phone's grants
+  are read from the app's own Settings guard when it matters; `dumpsys location` shows the app's
+  `HIGH_ACCURACY` request (`ProviderRequest[@+3s0ms … WorkSource{10548 com.mosquetracker.app.debug}]`)
+  while Home is open.
 - **Status (2026-10-16, mosque sound profile):** `RingerController` snapshotted ringer mode +
   media/alarm volumes on entry, zeroed them, and restored everything on exit (DataStore-persisted,
   voice-call stream never touched). Verified on `emulator-5554`: entry → ringer SILENT, exit →
@@ -425,11 +561,18 @@ directories the emulator loads from:
    then walk/teleport across the zone boundary; confirm each armed action lands on entry and the
    exit actions put the originals back. Confirm Settings stops showing *Restore now*.
 4. Confirm an `attendance_logs` row appears in History with the right method.
-5. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
-6. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the credit
+5. Drag test (no walking): press and hold a saved pin and drag it onto your blue dot — the circle
+   turns red, a visit row opens and the routine applies; drag it off again — green, visit closed,
+   routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds
+   (§5.25).
+6. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
+7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the credit
    under the map changes, then confirm the choice survives an app restart.
-7. Reboot the device; confirm monitoring restarts (boot receiver).
-8. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
+8. Reboot the device; confirm monitoring restarts (boot receiver).
+9. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
+10. Emulator, boundary: `.\tools\zone-boundary-sweep.ps1 -Mosque "<name>" -WatchArrival` must report
+    *Inside* up to the drawn radius and *Outside* beyond it, and record exactly one arrival on entry
+    (nothing while waiting outside).
 
 ---
 

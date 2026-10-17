@@ -14,7 +14,7 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 
 | # | Screen | Where | Purpose |
 |---|--------|-------|---------|
-| 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere. The app bar switches the basemap between **Streets** and **Satellite**. |
+| 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API when online, cached day or solar math offline) with next-prayer countdown, and the prayer silence buffer toggle. |
 | 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs and a "not possible on Android" list — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
@@ -52,6 +52,32 @@ that accuracy is looser than the dot itself (under ~30 m the dot would cover it 
 normal GPS fix you see just the dot, and when the phone is struggling — indoors, or on a network
 fix — you get a visible halo saying *somewhere in here*. Above 200 m the halo is dropped entirely,
 since a circle that size would wash out every detection zone on screen while telling you nothing.
+
+### Which zone has you
+
+Every tracked mosque is drawn as a faint green wash, and the one whose circle covers the current fix
+is drawn **red** — same rule as the pill and the arrival check, so the map cannot disagree with the
+badge above it. That is the "this is the circle that just silenced my phone" signal, and it is
+readable from across the room.
+
+### Moving a mosque (and testing a zone without walking)
+
+**Press and hold a saved pin, then drag it.** The circle follows the finger, and a chip at the top
+reads out the live distance and whether you are inside — hold the pin until that chip flips and you
+are holding it exactly on the boundary. On release the new coordinates are saved and the geofence is
+re-registered at the new place.
+
+That makes the arrival test work without moving an inch: drag a mosque onto your dot and the app
+records a real arrival and runs the routine; drag it off again and the visit closes and the routine
+is restored. The second half has to be produced by the app rather than the geofence, because a
+re-registered fence only ever raises an `ENTER` (`INITIAL_TRIGGER_ENTER`) — full reasoning in
+`DetectionPipeline.moveTransition`, including why the `EXIT` is only synthesised when that mosque
+actually has an open visit.
+
+Two osmdroid details are worth knowing before touching this code: a marker drag starts from a **long
+press** (`Marker.onLongPress`, not `onTouchEvent`), and osmdroid snaps the marker's anchor onto the
+finger when the drag begins — the app cancels that jump with `Marker.setDragOffset`, otherwise every
+move would be saved off by however far from the tip you grabbed the pin.
 
 ---
 
@@ -108,20 +134,58 @@ Flow: the geofence transition wakes `GeofenceBroadcastReceiver` (kept trivial), 
 `VerificationWorker`. The worker runs the distance check, writes the attendance row, posts a
 notification, and applies/restores the user's routine (`routine/RoutineEngine.kt`). Saving a mosque
 runs the same check immediately, so you get an instant answer instead of waiting for the OS
-round-trip.
+round-trip — and while the app is running, every fix Home already collects is run past the saved
+mosques the same way (`detection/ZoneWatch.kt`), because a fence event on its own is one reading
+taken at one moment (see *What counts as inside*).
 
 ```
 GeofencingClient ──ENTER/EXIT──▶ GeofenceBroadcastReceiver ──▶ VerificationWorker
-                                                                    │
-                                            DetectionPipeline (Tier 2 → Tier 3)
-                                                                    │
-                                      AttendanceRepository · Notifier · RoutineEngine
+Home's live fixes ─▶ ZoneWatch (inside-test on every fix) ──▶        │
+                                                                     │
+                                             DetectionPipeline (Tier 2 → Tier 3)
+                                                                     │
+                                       AttendanceRepository · Notifier · RoutineEngine
 ```
 
 Background machinery is coordinated by `monitoring/MonitoringController.kt`:
 foreground service (`service/DetectionForegroundService.kt`) + registered geofences +
 a 15-minute `GeofenceRefreshWorker` (`work/MonitoringScheduler.kt`) that re-registers fences so they
 survive OS cleanup. `detection/BootReceiver.kt` restarts monitoring after reboot/app update.
+
+### What counts as inside
+
+Inside means exactly one thing: **the reported position lies within the circle you drew**. The fix's
+accuracy is not part of the comparison, so a fix whose error circle overlaps the mosque circle while
+its centre sits outside is scored as **outside**. One function decides this
+(`DetectionPipeline.isInsideZone`) and both the Home pill and the arrival check call it, so the two
+cannot drift apart — the map paints the same answer, in red, on the zone that has you.
+
+That also decides how far the app can be woken: the OS geofence is registered with the same radius,
+so Play Services raises an `ENTER` only once the reported position itself crosses the circle. Making
+a touching accuracy circle count as inside would mean widening the registered geofence by the same
+margin — otherwise the app would never be told about the positions it is supposed to accept.
+
+### Arrival is watched, not just pushed
+
+A geofence reports the crossings its platform believes in, and every report is verified against a
+single fix — so a phone that lands on the boundary at the moment of its arrival can have that
+arrival rejected once and then never hear about that mosque again for the whole visit. The app
+therefore runs the same inside-test over the fixes Home is already collecting
+(`detection/ZoneWatch.kt`, the decision in `DetectionPipeline.watchTransition`), and every trigger
+carries the fix it was decided on into `VerificationWorker`, so the reading that decides an arrival
+is the reading that records it. Fence events, which carry no fix, are checked against the cached
+reading and then against one requested freshly.
+
+The watch releases an open visit only once the fix is 25 m past the circle, so a jittery boundary
+cannot make the ringer flip. Fence exits and pin moves stay immediate: those follow an event the
+platform or the user has already decided on. Standing right on the rim is the honest edge case — the
+paint may flicker red/grey while the routine holds.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest                              # ZoneBoundaryTest: the rule, the boundary, the watch
+.\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor"                 # emulator: real positions vs the drawn circle
+.\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor" -WatchArrival   # ... and a real geofence-driven arrival
+```
 
 ---
 
@@ -346,5 +410,8 @@ material is present, `assembleRelease` falls back to debug signing so a fresh cl
 - `AI Agent Help context project.md` — the living master context (architecture, quirks, signing,
   environment, device-verification status). **Keep it up to date with every change.**
 - `tools/verify-on-device.ps1` — build → install → launch → crash-watch → screenshot → checklist.
+- `tools/zone-boundary-sweep.ps1` — drives an emulator across a mosque's boundary and checks the
+  Inside/Outside pill plus a real geofence-driven arrival. Its `-List` only reads the database, so it
+  works on a physical phone too (handy for checking what the app has saved).
 - `tools/diagnose-emulator.ps1` — why the emulator won't start (edition, Media Foundation, functional test).
 - `tools/fix-emulator-mediafoundation.ps1` — local, reversible fix for Windows *N* editions (`-Undo` reverts).
