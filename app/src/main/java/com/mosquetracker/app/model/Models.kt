@@ -2,17 +2,21 @@ package com.mosquetracker.app.model
 
 /** How a visit was confirmed. Mirrors the `detection_method` column. */
 enum class DetectionMethod {
-    /** Tier 1/3: OS geofence transition or straight-line distance fallback. */
+    /** GPS only: OS geofence transition, or straight-line distance against the drawn circle. */
     GEOFENCE,
-
-    /** Tier 2: connected/nearby Wi-Fi BSSID matched. */
-    WIFI,
-
-    /** Tier 2: BLE beacon matched. */
-    BLE,
 
     /** User logged the visit by hand. */
     MANUAL,
+}
+
+/**
+ * What happens on arrival at one mosque. Mirrors the `alert_mode` column.
+ * Notify-only mosques still log visits and post the arrival notice, they just
+ * never touch the sound profile.
+ */
+enum class AlertMode {
+    FULL_SILENT,
+    NOTIFY_ONLY,
 }
 
 /** One GPS reading from the fused location provider. */
@@ -23,23 +27,7 @@ data class LocationSample(
     val timestamp: Long,
 )
 
-/** A Wi-Fi access point seen by the scanner. */
-data class WifiAccessPoint(
-    val ssid: String?,
-    val bssid: String,
-    val rssi: Int,
-    val frequencyMhz: Int,
-)
-
-/** A BLE advertiser seen by the scanner. */
-data class BleBeacon(
-    val name: String?,
-    val address: String,
-    val rssi: Int,
-    val serviceUuids: List<String>,
-)
-
-/** Result of running the cascading verification pipeline. */
+/** Result of running the verification pipeline. */
 data class DetectionOutcome(
     val confirmed: Boolean,
     val method: DetectionMethod,

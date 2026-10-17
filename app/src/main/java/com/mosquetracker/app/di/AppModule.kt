@@ -19,7 +19,9 @@ object AppModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
-        Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME).build()
+        Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
+            .build()
 
     @Provides
     fun provideMosqueDao(database: AppDatabase): MosqueDao = database.mosqueDao()

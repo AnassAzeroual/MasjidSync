@@ -1,8 +1,10 @@
 # AI Agent Help — Project Context & Master Guide
 
-**Project:** **Mosque Tracker** — an **offline-first Android app** that detects when you arrive at a
-mosque, silences the phone on entry, restores it on exit, and logs your attendance. No account, no
-server, no network required.
+**Project:** **MasjidSync** (display name; code namespace stays `com.mosquetracker.app`) — an
+**offline-first Android app** that detects when you arrive at a mosque, silences the phone on
+entry, restores it on exit, and logs your attendance. No account, no server. Detection, storage
+and attendance logging are entirely on-device; only map tiles and place-name search touch the
+network.
 
 Read this file end-to-end before touching the code. It covers architecture, the detection pipeline,
 engineering decisions and quirks, versioning, signing, build/verify commands, and the git workflow.
@@ -32,9 +34,14 @@ Snapshot at time of writing:
 - SDK: `minSdk 26`, `compileSdk 37`, `targetSdk 37`
 - Toolchain: AGP **9.4.1**, Gradle **9.6.0**, Kotlin (built-in via AGP) **2.2.10**, KSP **2.3.12**,
   Compose BOM **2026.09.00**
-- Status: debug + release builds green, 9 unit tests pass, `lintDebug` exits 0.
+- Status: debug + release builds green, 17 unit tests pass, `lintDebug` exits 0
+  (only the two informational version-currency warnings).
+- Routine: **editable** (one switch per action, catalogue in `model/RoutineAction.kt`); a full
+  armed entry→exit cycle is verified on-device, see §8.
+- UI: **MasjidSync** template rebuild verified on-device (Home map + Inside pill + status card,
+  Settings toggles + search + routine editor, editor sheet, full save flow) — see §8.
 - Emulator: **working** (after the Media Foundation workaround, §8) — app installs and launches on
-  `Medium_Phone`; the manual on-device checklist is still outstanding.
+  `Medium_Phone`; core flows verified via `uiautomator` + screenshots, see §8.
 
 ---
 
@@ -66,42 +73,82 @@ Snapshot at time of writing:
 Single-activity Jetpack Compose app, MVVM + Repository, Hilt DI, Room persistence, Coroutines/Flow.
 
 ```
-MainActivity → MainScreen (bottom nav) → Dashboard / Sensors / Override Center / History
-                                              └── AddMosqueDialog (shared)
+MainActivity → MainScreen (bottom nav: Home / History / Settings)
 ```
 
 ### Screens
 
 | # | Screen | Package |
 |---|--------|---------|
-| 1 | Dashboard (status, nearest mosque, toggles, permission banners) | `ui/dashboard` |
-| 2 | Coordinates & sensor dashboard (GPS fix, Wi-Fi BSSID, nearby APs, BLE beacons) | `ui/sensors` |
-| 3 | "+ Add current location as mosque" (dialog) | `ui/addmosque` |
-| 4 | Detection Override Center (bind Wi-Fi/BLE per mosque) | `ui/mosques` |
-| 5 | History / attendance logs (grouped by day) | `ui/history` |
+| 1 | Home — OSM map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
+| 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
+| 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math) + next-prayer countdown, prayer silence buffer | `ui/qibla` |
+| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches, "not possible on Android" list | `ui/settings` |
 
-### Three-tier detection pipeline
+Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off, `AppIcons`,
+`Permissions`, `SectionCard`/`KeyValueRow`/`EmptyState`). The old `ui/dashboard` (list) and
+`ui/mosques` packages were removed in the MasjidSync rebuild.
 
-| Tier | Mechanism | Code |
+### GPS-only detection (two steps, no Wi-Fi/BLE)
+
+| Step | Mechanism | Code |
 |------|-----------|------|
 | **1** | OS geofence `ENTER`/`EXIT` | `detection/GeofenceManager.kt`, `detection/GeofenceBroadcastReceiver.kt` |
-| **2a** | Wi-Fi BSSID (connected first, then cached scan results) | `detection/WifiScanner.kt`, `detection/DetectionPipeline.kt` |
-| **2b** | BLE beacon (address / service UUID / name) | `detection/BleScanner.kt`, `detection/DetectionPipeline.kt` |
-| **3** | Haversine distance ≤ 50 m | `detection/Haversine.kt`, `detection/GeoUtils.kt` |
+| **2** | Haversine distance ≤ the mosque's own drawn circle | `detection/DetectionPipeline.kt`, `detection/Haversine.kt`, `detection/GeoUtils.kt` |
 
 Flow: geofence transition → `GeofenceBroadcastReceiver` (trivial) → `VerificationWorker` runs the
-cascade → `AttendanceRepository` writes the row → `Notifier` posts → `RingerController` silences /
-restores. `monitoring/MonitoringController.kt` owns the foreground service, geofence registration, and
-the 15-minute `GeofenceRefreshWorker`. `detection/BootReceiver.kt` restarts monitoring after reboot /
-app update.
+check → `AttendanceRepository` writes the row → `Notifier` posts → `RoutineEngine` applies /
+restores the user's routine. `monitoring/MonitoringController.kt` owns the foreground service, geofence registration
+(**tracked mosques only**), and the 15-minute `GeofenceRefreshWorker`. `detection/BootReceiver.kt`
+restarts monitoring after reboot / app update. Saving a mosque runs the same pipeline immediately
+(`onMosqueAdded`), so the user gets an instant answer.
 
-### Database (Room, schema exported to `app/schemas/`)
+### The routine (editable If / Then / When-it-ends)
 
-- **`mosques`**: `id`, `name`, `latitude`, `longitude`, `geofence_radius` (default 100), `wifi_bssid`,
-  `ble_uuid`, `created_at`.
+The Settings card is the single place that decides what the phone does on arrival. `If` is the
+tracked-mosque list; `Then` and `When it ends` are one switch per action, stored in DataStore under
+`routine_actions` and catalogued in `model/RoutineAction.kt`. "Run the routine on arrival" (the
+`auto_silent` key) is the master switch, and the prayer-silence feature reuses the routine's
+sound subset (`RoutineAction.SOUND_PROFILE`).
+
+| Group | On arrival | Needs |
+|---|---|---|
+| Sound | Silent ringer, Vibrate instead (silent wins), Mute media, Mute alarm volume, Mute notification volume, Mute system sounds | DND access for the ring modes |
+| Focus | Do Not Disturb (total silence), Do Not Disturb (alarms only) | DND access |
+| Device | Flashlight on, Vibrate once, Dim the screen, Shorten screen timeout, Lock rotation off | WRITE_SETTINGS for the display rows |
+| Notice | Arrival notice | — |
+
+On exit: `Restore sound` (ring mode + volumes + DND), `Restore device` (brightness, timeout,
+rotation, flashlight), `Exit notice`. Restoring is per-part, so turning one off leaves that part
+pending rather than silently dropping it, and Settings offers **Restore now** as a safety valve.
+
+`routine/RoutineEngine.kt` snapshots the pre-arrival state once (not per ENTER) into
+`routine_snapshot` and puts back exactly what it changed. Two hard-won quirks are baked in:
+
+1. **The ring mode is written last and re-asserted.** `STREAM_SYSTEM` is one of the streams the
+   ring mode governs (`dumpsys audio` → `ringer mode affected streams = 0x1a6`), so muting it
+   re-derives the ring mode as VIBRATE a moment later and undoes a silent ringer. The
+   `MUTE_SYSTEM` write is therefore skipped whenever a ring-mode action is armed (it is redundant
+   then) and `setRingModeAndSettle` re-checks after a short gap.
+2. **Every action is best-effort.** Missing access, no flash unit, or an OEM refusal means the
+   action is skipped, and the affected value is left out of the snapshot so nothing is restored to
+   a value we never set.
+
+Actions Android reserves for the system are listed in `BLOCKED_ACTIONS` and shown in Settings so
+the user sees the full menu and the reason (Wi-Fi/Bluetooth toggling, battery saver, mobile data,
+airplane mode, lock-now, background-data restrictions).
+
+### Database (Room, schema exported to `app/schemas/`, currently **v4**)
+
+- **`mosques`**: `id`, `name`, `latitude`, `longitude`, `geofence_radius` (editor range 20–100 m,
+  default 60), `tracking_enabled` (default 1), `alert_mode` (`FULL_SILENT` | `NOTIFY_ONLY`,
+  default `FULL_SILENT`), `created_at`.
 - **`attendance_logs`**: `id`, `mosque_id` (FK → `mosques.id`, `ON DELETE CASCADE`, indexed),
-  `entry_time`, `exit_time` (nullable), `detection_method`
-  (`GEOFENCE` | `WIFI` | `BLE` | `MANUAL`).
+  `entry_time`, `exit_time` (nullable), `detection_method` (`GEOFENCE` | `MANUAL`;
+  legacy `WIFI`/`BLE` rows fall back to `GEOFENCE` in History).
+- Migrations: v1 → v2 drops the dead `wifi_bssid`/`ble_uuid` columns (table rebuild, data kept);
+  v2 → v3 adds `tracking_enabled` (`ADD COLUMN`, safe on all API levels);
+  v3 → v4 adds `alert_mode` (same pattern). All verified on-device against real data (see §8).
 
 Column names intentionally mirror the original spec so the SQLite file is inspectable with `sqlite3`.
 
@@ -119,33 +166,72 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
    bounding-box prefilter to keep candidate sets small.
 4. **Icons are local `ImageVector`s** in `ui/common/AppIcons.kt` (built with `addPathNodes` from
    Material path data). The official `material-icons-core` / `-extended` artifacts are frozen at
-   1.7.8 and unmaintained — do not add them. Small XML drawables (`ic_wifi`, `ic_bluetooth`,
-   `ic_mosque`, `ic_stat_mosque`) also exist for notifications/launcher.
-5. **`WifiManager.startScan()` is deprecated / throttled**, so `WifiScanner.scanNearby()` reads the
-   framework's cached `scanResults` and prefers `ScanResult.wifiSsid` on API 33+ with a
-   `@Suppress("DEPRECATION")` `SSID` fallback below 33. Do not reintroduce `startScan()`.
-6. **AOSP has no first-party geofencing API**, so Tier 1 uses Play Services' `GeofencingClient`.
-7. **Hilt Compose entry point** is `androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel`
+   1.7.8 and unmaintained — do not add them. Map pins use the `mosque_pin.xml` vector drawable
+   (green, on-brand); `ic_stat_mosque` serves notifications.
+5. **AOSP has no first-party geofencing API**, so Tier 1 uses Play Services' `GeofencingClient`.
+6. **Hilt Compose entry point** is `androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel`
    (`hilt-lifecycle-viewmodel-compose`), not the older `hilt-navigation-compose` path.
-8. **`-Xannotation-default-target=param-property`** is set in `:app`'s Kotlin options to adopt the
+7. **`-Xannotation-default-target=param-property`** is set in `:app`'s Kotlin options to adopt the
    future default for constructor-property annotations (clears KT-73255 warnings). Keep it.
-9. **Lint suppressions are deliberate and commented:**
+8. **Lint suppressions are deliberate and commented:**
    - `@SuppressLint("MissingPermission")` on `Notifier.updateForeground` / `Notifier.notify` — every
      `manager.notify(...)` call is gated by the private `canPostNotifications()` check, which lint
      cannot see through.
    - `@SuppressLint("InlinedApi")` on `DetectionForegroundService.onStartCommand` —
      `FOREGROUND_SERVICE_TYPE_LOCATION` is inlined from API 29; `ServiceCompat.startForeground`
      swallows the type below 29, so it is safe on minSdk 26.
-10. **Adaptive launcher icons live in `res/mipmap-anydpi/`** (not `-anydpi-v26`) because minSdk is 26
+9. **Adaptive launcher icons live in `res/mipmap-anydpi/`** (not `-anydpi-v26`) because minSdk is 26
     and lint flags the redundant `-v26` qualifier. They reference `@drawable/ic_launcher_background`
     (which hardcodes `#0F766E`), so `@color/ic_launcher_background` was removed as unused.
-11. Only two lint warnings remain, both informational version-currency notices
+10. Only two lint warnings remain, both informational version-currency notices
     (`AndroidGradlePluginVersion`, `NewerVersionAvailable`). Leave them unless deliberately upgrading.
-12. **Screens that show a FAB must reserve their own bottom padding.** Material 3's `Scaffold`
-    draws `floatingActionButton` *over* the body rather than insetting it, so the Dashboard and
-    Mosques screens end their scrolling content with `FabContentPadding` (88dp, defined in
-    `ui/common/ScreenScaffold.kt`). Without it the "Add mosque" FAB floated over the Dashboard's
-    last card — the **Summary** card.
+11. **Bottom content floats over the map; there are no FABs.** Home and Settings use full-width gold
+    buttons instead of floating action buttons (the old `FabContentPadding` reservation was removed
+    with them). The editor sheet is deliberately non-modal: a scrim would swallow the map taps the
+    zone picker needs.
+12. **osmdroid `Marker` needs an explicit app icon.** The shared default marker icon can go blank
+    (and therefore untappable — hit-testing needs a drawn rect) after MapView detach/recycle cycles
+    (`Marker.onDetach` nulls listeners and recycles the icon via `BitmapPool.asyncRecycle`). Every
+    pin — picker and saved, tracked (full alpha) or not (dimmed) — therefore sets our own
+    `mosque_pin` drawable in code at creation time. Never rely on the osmdroid default icon.
+13. **Search needs the network; the toggle needs the DB.** `PlaceSearch` disables its field while
+    `ConnectivityManager` reports no validated connection, and `Geocoder.isPresent()` gates the
+    backend. Below API 33 the callback `Geocoder` API does not exist, so the blocking call runs on
+    `Dispatchers.IO` under `@Suppress("DEPRECATION")` — a documented deviation (§10.6).
+14. **Prayer silence is chained one-shots, not periodic.** `PrayerScheduler.scheduleNext` aims a
+    silence + restore pair at the next ±buffer window (today, else tomorrow's Fajr); the restore
+    worker chains the following window. Toggle-off cancels both. Refresh points: Qibla open,
+    toggle/buffer change, boot. Overlap with a geofence-applied routine self-heals on the next
+    ENTER (see `VerificationWorker` comment).
+15. **The QS tile is a plain toggle.** `MonitoringTileService` (Hilt-injected `TileService`)
+    flips monitoring and re-reads state every `onStartListening`; no unlock needed.
+16. **CSV export uses the Storage Access Framework** (`CreateDocument`), so no storage permission
+    is declared. Stats (streak included) are computed in Kotlin from the already-loaded history
+    rows — no extra DAO queries.
+17. **Prayer times prefer the Aladhan API, degrade gracefully.** `PrayerRepository` tries
+    `timings/DD-MM-YYYY?latitude=..&longitude=..&method=21` (Morocco convention, matching local
+    mosque timetables; plain HttpURLConnection + org.json, no new dependency), falls back to the
+    same-day cache within 50 km, else to the local MWL solar math in `PrayerTimes` — so Qibla and
+    the silence scheduler work fully offline. API times render in the API's own `meta.timezone`.
+    Verified identical to the API on-device.
+18. **The routine is data, not code.** `model/RoutineAction.kt` is the single catalogue (label,
+    description, `ActionPhase`, `ActionGroup`, `ActionRequirement`, `defaultEnabled`). Adding an
+    action is one enum entry plus one application site in `RoutineEngine`; the Settings editor, the
+    "N of 14 armed" counter, the access hints and the blocked list all derive from the catalogue.
+    Fresh-install defaults are in `RoutineAction.DEFAULT_ENABLED`, never in `SettingsStore`.
+19. **The routine snapshot is captured once, restored per-part.** `RoutineEngine.apply` reuses an
+    existing `routine_snapshot` so a repeated ENTER cannot overwrite the true pre-arrival values,
+    and `revert` only puts back the parts the enabled on-exit actions cover — what is left stays in
+    the snapshot (and Settings keeps offering *Restore now*). Fields are `UNSET = -1` when not
+    captured, so `restoreVolume`/`restoreDndFilter` no-op instead of writing a value we never set.
+20. **The ring mode is the last audio write and is re-asserted** (`setRingModeAndSettle`).
+    `STREAM_SYSTEM` is one of the streams the ring mode governs on this build
+    (`dumpsys audio` → `ringer mode affected streams = 0x1a6` includes `STREAM_SYSTEM`), so muting
+    it zeroes the ring stream and makes AudioService re-derive the ring mode as VIBRATE a moment
+    later — silently undoing "Silent ringer". `applyOnArrival` therefore skips the `MUTE_SYSTEM`
+    write while a ring-mode action is armed (redundant in that case: the ring mode already mutes
+    those streams), and the Settings row reads "already handled by the ring mode". Do not "fix" the
+    skip without re-testing a full armed cycle on `MUTE_SYSTEM` + `SILENT_RINGER`.
 
 ---
 
@@ -156,7 +242,7 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 .\gradlew.bat :app:assembleDebug        # debug APK  → app/build/outputs/apk/debug/app-debug.apk
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking → app/build/outputs/apk/release/app-release.apk
-.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (9 tests)
+.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (17 tests)
 .\gradlew.bat :app:lintDebug            # must exit 0
 ```
 
@@ -200,8 +286,36 @@ Static APK verification (no device needed):
   `Medium_Phone` and `Small_Phone`; a cold boot completed in ~38.7 s; `app-debug.apk` installed and
   `com.mosquetracker.app.debug/com.mosquetracker.app.MainActivity` became `topResumedActivity` with no
   crash. Evidence: `artifacts/emulator-dashboard.png` (gitignored).
-- Still outstanding: the **manual checklist** (§9) — sensors, geofence enter/exit, Wi-Fi/BLE tier
-  precedence, reboot and battery behaviour. On an emulator, `adb emu geo fix` can drive the geofence.
+- **Status (2026-10-17, editable routine):** `RingerController` was replaced by `routine/RoutineEngine.kt`
+  plus the `model/RoutineAction.kt` catalogue; the Settings "My Routine" card is now an editor with
+  one switch per action. Verified on `emulator-5554` with `adb emu geo fix`:
+  entry → ringer SILENT, media 0, notification 0, alarm at the device minimum, screen brightness
+  24 (from 102); exit → ringer NORMAL, media 5, alarm 6, notification 1, brightness 102 — exactly
+  the captured pre-arrival values, with `routine_snapshot` cleared from DataStore. Action toggles
+  survive a force-stop + relaunch.
+  **Quirk found and fixed:** on this build `STREAM_SYSTEM` is one of the ringer-mode-affected
+  streams (`dumpsys audio`: `ringer mode affected streams = 0x1a6`, which includes `STREAM_SYSTEM`),
+  so writing it zeroes the ring stream and lets AudioService re-derive the ring mode as VIBRATE a
+  moment later — which silently undid "Silent ringer". `RoutineEngine` therefore skips the
+  `MUTE_SYSTEM` write whenever a ring-mode action is armed (the ring mode already mutes those
+  streams) and re-asserts the ring mode last with a short settle check. The routine row says
+  "already handled by the ring mode" so the UI stays honest.
+  Needs DND access for the ring-mode/DND actions, granted on the emulator via
+  `adb shell cmd notification allow_dnd com.mosquetracker.app.debug`, and WRITE_SETTINGS for the
+  display actions, granted via `adb shell appops set com.mosquetracker.app.debug WRITE_SETTINGS allow`
+  (the system UI list omits the app, so grant it by shell when testing).
+- **Status (2026-10-16, mosque sound profile):** `RingerController` snapshotted ringer mode +
+  media/alarm volumes on entry, zeroed them, and restored everything on exit (DataStore-persisted,
+  voice-call stream never touched). Verified on `emulator-5554`: entry → ringer SILENT, exit →
+  ringer NORMAL, snapshot holds the true originals.
+  screenshots and pixel analysis — Home (Inside pill, gold button, check-in card), Settings
+  (tracking toggles flip detection both ways, search finds a place and opens the picker at it),
+  editor sheet (name + 20–100 m slider + Save & Activate), full save flow (DB row + instant
+  check-in), and both Room migrations on real data (v1 → v2 → v3, rows preserved). No crashes.
+  Test residue left on the emulator: an `Al-Noor` mosque + its open check-in (delete from
+  Settings if unwanted).
+- Still outstanding: the **manual checklist** (§9) — geofence enter/exit timing on real hardware,
+  reboot and battery behaviour. On an emulator, `adb emu geo fix` can drive the geofence.
 
 ### Tools
 - `tools/diagnose-emulator.ps1` — one-shot report (edition, Media Foundation, workaround copies) plus a
@@ -262,11 +376,13 @@ directories the emulator loads from:
 
 ## 9. MANUAL CHECKLIST (run on real hardware)
 
-1. Grant foreground location → "Allow all the time" → notifications → DND access from the dashboard.
-2. Add a mosque at your current location; confirm it appears in the Override Center.
-3. Walk/teleport across the geofence boundary; confirm the phone silences on entry and restores on exit.
+1. Grant foreground location → "Allow all the time" → notifications → DND access from Home/Settings.
+2. Save your current position as a mosque; confirm the pin, the green circle and the instant check-in.
+3. Arm a few routine actions in Settings (e.g. *Silent ringer* + *Mute media* + *Dim the screen*),
+   then walk/teleport across the zone boundary; confirm each armed action lands on entry and the
+   exit actions put the originals back. Confirm Settings stops showing *Restore now*.
 4. Confirm an `attendance_logs` row appears in History with the right method.
-5. Bind a Wi-Fi BSSID / BLE beacon and confirm Tier 2 wins over Tier 3 in the logged method.
+5. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
 6. Reboot the device; confirm monitoring restarts (boot receiver).
 7. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
 
@@ -278,7 +394,18 @@ directories the emulator loads from:
 2. Local `ImageVector` icon set instead of the frozen `material-icons-*` artifacts (§5.4).
 3. `org.jetbrains.kotlin.android` intentionally not applied (AGP 9 built-in Kotlin) (§5.1).
 4. Tier 1 uses Play Services `GeofencingClient` because AOSP has no first-party geofence API (§5.6).
-5. Wi-Fi scanning reads cached results instead of calling the deprecated `startScan()` (§5.5).
+5. The editor sheet has no mini-map: the green circle drawn on the main map behind the sheet *is*
+   the live radius preview (and the exact geofence that gets armed).
+6. Below API 33 the callback `Geocoder` API does not exist, so place search uses the blocking
+   `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there; API 33+ uses
+   the listener version. No API key or extra dependency either way.
+7. Prayer times are computed offline (MWL convention) and land within ~10 minutes of published
+   timetables — fine for a ±15 min silence buffer, not authoritative. Where twilight never gets
+   deep enough (high-latitude summer), Fajr/Isha fall back to the seventh-of-night rule.
+8. `MUTE_SYSTEM` is skipped when a ring-mode action is armed (§5.20) — the ring mode already mutes
+   the streams it governs, and writing them separately lets the platform re-derive the ring mode.
+   Actions Android reserves for the system are not built at all; they are listed in
+   `RoutineAction.BLOCKED_ACTIONS` and shown in Settings with the reason.
 
 Network sync of attendance is intentionally **out of scope** for the MVP; the schema and repositories
 are local-only and a sync layer can be added later without changing the tables.

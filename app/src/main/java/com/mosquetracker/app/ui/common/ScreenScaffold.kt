@@ -4,34 +4,32 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-
-/**
- * Extra bottom padding for the scrollable content of a screen that shows a floating action
- * button. [Scaffold] draws the FAB on top of the body rather than insetting it, so screens with
- * a FAB must reserve this space themselves — otherwise the FAB floats over their last cards.
- *
- * Sized to clear a 56dp FAB (extended and regular) plus a comfortable gap.
- */
-val FabContentPadding = 88.dp
+import androidx.compose.ui.graphics.Color
 
 /**
  * Inner scaffold for a tab: the outer [com.mosquetracker.app.ui.MainScreen] already
  * applies window insets, so this one intentionally consumes none of them.
+ *
+ * The header defaults to the MasjidSync brand bar (deep green with white text); pass explicit
+ * colors for screens that need a different treatment.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenScaffold(
     title: String,
     modifier: Modifier = Modifier,
+    navigationIcon: @Composable (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
+    headerContainerColor: Color = MaterialTheme.colorScheme.primary,
+    headerContentColor: Color = MaterialTheme.colorScheme.onPrimary,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
@@ -40,9 +38,15 @@ fun ScreenScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(title) },
+                navigationIcon = navigationIcon ?: {},
                 actions = actions,
                 windowInsets = WindowInsets(0, 0, 0, 0),
-                colors = TopAppBarDefaults.topAppBarColors(),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = headerContainerColor,
+                    titleContentColor = headerContentColor,
+                    navigationIconContentColor = headerContentColor,
+                    actionIconContentColor = headerContentColor,
+                ),
             )
         },
         floatingActionButton = floatingActionButton,

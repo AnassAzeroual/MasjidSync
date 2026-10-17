@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
 import com.mosquetracker.app.data.local.entity.MosqueEntity
+import com.mosquetracker.app.model.AlertMode
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -27,12 +28,16 @@ interface MosqueDao {
      * Cheap rectangular pre-filter for the Tier 3 distance fallback. Android's
      * bundled SQLite has no trig functions, so the exact Haversine distance is
      * computed in Kotlin on this small candidate set.
+     *
+     * Only mosques with tracking switched on are candidates: the toggle in
+     * Settings → Location & Geofencing must silence detection, not just fences.
      */
     @Query(
         """
         SELECT * FROM mosques
         WHERE latitude BETWEEN :minLat AND :maxLat
           AND longitude BETWEEN :minLon AND :maxLon
+          AND tracking_enabled = 1
         """,
     )
     suspend fun getWithinBoundingBox(
@@ -44,6 +49,14 @@ interface MosqueDao {
 
     @Insert
     suspend fun insert(mosque: MosqueEntity): Long
+
+    /** Flips one mosque's tracking switch without touching its zone or name. */
+    @Query("UPDATE mosques SET tracking_enabled = :enabled WHERE id = :id")
+    suspend fun setTrackingEnabled(id: Long, enabled: Boolean)
+
+    /** Changes one mosque's arrival behaviour. */
+    @Query("UPDATE mosques SET alert_mode = :mode WHERE id = :id")
+    suspend fun setAlertMode(id: Long, mode: AlertMode)
 
     @Update
     suspend fun update(mosque: MosqueEntity)

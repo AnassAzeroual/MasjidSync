@@ -1,25 +1,22 @@
 package com.mosquetracker.app.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
-    primary = Teal700,
+    primary = MasjidGreen800,
     onPrimary = Neutral0,
-    primaryContainer = Teal50,
-    onPrimaryContainer = Teal900,
-    secondary = Gold600,
+    primaryContainer = MasjidGreen100,
+    onPrimaryContainer = MasjidGreen900,
+    secondary = Gold500,
     onSecondary = Neutral0,
-    secondaryContainer = Gold400,
+    secondaryContainer = Gold100,
     onSecondaryContainer = Color(0xFF3F2E00),
+    tertiary = Gold400,
     background = Neutral0,
     onBackground = Neutral90,
     surface = Neutral0,
@@ -30,14 +27,15 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Teal600,
+    primary = MasjidGreen700,
     onPrimary = Neutral0,
-    primaryContainer = Teal900,
-    onPrimaryContainer = Teal50,
+    primaryContainer = MasjidGreen900,
+    onPrimaryContainer = MasjidGreen100,
     secondary = Gold400,
     onSecondary = Color(0xFF3F2E00),
     secondaryContainer = Color(0xFF5C4200),
     onSecondaryContainer = Gold400,
+    tertiary = Gold400,
     background = Neutral95,
     onBackground = Color(0xFFE2E2E5),
     surface = Neutral95,
@@ -49,21 +47,12 @@ private val DarkColors = darkColorScheme(
 @Composable
 fun MosqueTrackerTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColors
-        else -> LightColors
-    }
-
+    // Brand-first: dynamic (wallpaper) colors would replace the MasjidSync
+    // green/gold identity, so they stay off.
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         typography = AppTypography,
         content = content,
     )

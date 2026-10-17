@@ -122,6 +122,21 @@ kotlin {
     }
 }
 
+// Libraries may declare a kotlin-stdlib newer than the compiler AGP gives us. Kotlin requires the
+// stdlib to be no newer than the compiler, and a newer one breaks the build with "compiled with an
+// incompatible version of Kotlin", so pin every stdlib artifact to the compiler's own version.
+val kotlinVersion = libs.versions.kotlin.get()
+
+configurations.configureEach {
+    resolutionStrategy {
+        force(
+            "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlinVersion",
+        )
+    }
+}
+
 ksp {
     // Export generated Room schema so migrations are reviewable in git.
     arg("room.schemaLocation", "$projectDir/schemas")
@@ -157,6 +172,7 @@ dependencies {
 
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.play.services.location)
+    implementation(libs.osmdroid.android)
     implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.kotlinx.coroutines.android)

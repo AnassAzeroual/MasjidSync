@@ -75,8 +75,8 @@ class Notifier @Inject constructor(
 
     fun notifyEntry(mosqueName: String, method: DetectionMethod) {
         notify(
-            title = "Arrived at $mosqueName",
-            text = "Attendance logged via ${method.label()}.",
+            title = "You're inside $mosqueName",
+            text = "Visit logged — detected by ${method.label()}.",
         )
     }
 
@@ -118,9 +118,7 @@ class Notifier @Inject constructor(
     }
 
     private fun DetectionMethod.label(): String = when (this) {
-        DetectionMethod.GEOFENCE -> "geofence"
-        DetectionMethod.WIFI -> "Wi-Fi"
-        DetectionMethod.BLE -> "Bluetooth beacon"
+        DetectionMethod.GEOFENCE -> "GPS"
         DetectionMethod.MANUAL -> "manual entry"
     }
 

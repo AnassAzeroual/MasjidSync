@@ -1,6 +1,7 @@
 package com.mosquetracker.app.detection
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,13 +39,28 @@ class HaversineTest {
     }
 
     @Test
-    fun fiftyMetersThresholdSeparatesNearFromFarPoints() {
-        // 0.0004 degrees of latitude is ~44.5 m: inside the Tier 3 radius.
+    fun defaultZoneRadiusSeparatesNearFromFarPoints() {
+        // 0.0004 degrees of latitude is ~44.5 m: inside the fallback zone.
         val near = Haversine.distanceMeters(0.0, 0.0, 0.0004, 0.0)
-        assertTrue(near <= DetectionPipeline.TIER_3_RADIUS_METERS)
+        assertTrue(DetectionPipeline.isInsideZone(near, configuredRadiusMeters = 0))
 
         // 0.001 degrees is ~111 m: outside it.
         val far = Haversine.distanceMeters(0.0, 0.0, 0.001, 0.0)
-        assertTrue(far > DetectionPipeline.TIER_3_RADIUS_METERS)
+        assertFalse(DetectionPipeline.isInsideZone(far, configuredRadiusMeters = 0))
+    }
+
+    @Test
+    fun theCircleTheUserDrewGovernsTheZone() {
+        // 0.00063 degrees of latitude is ~70 m.
+        val distance = Haversine.distanceMeters(0.0, 0.0, 0.00063, 0.0)
+
+        assertFalse(
+            "a 50 m zone must not confirm a 70 m fix",
+            DetectionPipeline.isInsideZone(distance, configuredRadiusMeters = 50),
+        )
+        assertTrue(
+            "a 200 m zone must confirm a 70 m fix",
+            DetectionPipeline.isInsideZone(distance, configuredRadiusMeters = 200),
+        )
     }
 }

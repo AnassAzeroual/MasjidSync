@@ -30,6 +30,17 @@ interface AttendanceDao {
     @Query("SELECT COUNT(*) FROM attendance_logs WHERE entry_time >= :since")
     fun observeVisitsSince(since: Long): Flow<Int>
 
+    /** Most recent visit (for the Home "Checked In at …" card), if any. */
+    @Query(
+        """
+        SELECT a.*, m.name AS mosque_name
+        FROM attendance_logs a
+        LEFT JOIN mosques m ON m.id = a.mosque_id
+        ORDER BY a.entry_time DESC LIMIT 1
+        """,
+    )
+    fun observeLatestEntry(): Flow<AttendanceWithMosque?>
+
     @Insert
     suspend fun insert(log: AttendanceLogEntity): Long
 

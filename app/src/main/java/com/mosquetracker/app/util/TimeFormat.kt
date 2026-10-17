@@ -15,6 +15,11 @@ object TimeFormat {
         Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalTime()
             .format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
 
+    /** 12-hour clock for the Home "Checked In at 1:15 PM" card. */
+    fun time12h(epochMillis: Long): String =
+        Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalTime()
+            .format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+
     fun date(epochMillis: Long): String =
         Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
             .format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy", Locale.getDefault()))
@@ -36,4 +41,11 @@ object TimeFormat {
 
     fun startOfTodayMillis(): Long =
         LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
+
+    /** Start of the current week (Monday) for the visit-stats card. */
+    fun startOfWeekMillis(): Long {
+        val today = LocalDate.now(zone)
+        val monday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+        return monday.atStartOfDay(zone).toInstant().toEpochMilli()
+    }
 }

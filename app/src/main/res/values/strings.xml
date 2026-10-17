@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Mosque Tracker</string>
+    <string name="app_name">MasjidSync</string>
 
     <string name="channel_detection_name">Mosque detection</string>
     <string name="channel_detection_desc">Keeps mosque geofence monitoring active in the background.</string>
@@ -8,7 +8,7 @@
     <string name="channel_events_desc">Notifies you when you enter or leave a mosque.</string>
 
     <string name="detection_notification_title">Mosque detection active</string>
-    <plurals name="detection_notification_text">
+    <string name="tile_monitoring_label">MasjidSync tracking</string>    <plurals name="detection_notification_text">
         <item quantity="one">Watching %1$d saved location in the background.</item>
         <item quantity="other">Watching %1$d saved locations in the background.</item>
     </plurals>

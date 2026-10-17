@@ -9,7 +9,7 @@ import com.mosquetracker.app.work.VerificationWorker
 
 /**
  * Receives Tier 1 geofence transitions. BroadcastReceivers must be fast, so the
- * actual Wi-Fi/BLE verification is handed to a [VerificationWorker].
+ * GPS distance check is handed to a [VerificationWorker].
  */
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
 

@@ -2,13 +2,19 @@ package com.mosquetracker.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Teal600 = Color(0xFF0D9488)
-val Teal700 = Color(0xFF0F766E)
-val Teal900 = Color(0xFF134E4A)
-val Teal50 = Color(0xFFE6FFFA)
+/**
+ * MasjidSync brand palette: deep mosque green headers and primary actions,
+ * warm gold for accent buttons and highlights.
+ */
+val MasjidGreen900 = Color(0xFF083D22)
+val MasjidGreen800 = Color(0xFF0B5D33)
+val MasjidGreen700 = Color(0xFF0E7340)
+val MasjidGreen100 = Color(0xFFDFF0E4)
+val MasjidGreen50 = Color(0xFFEDF6F0)
 
-val Gold400 = Color(0xFFFCD34D)
-val Gold600 = Color(0xFFD97706)
+val Gold500 = Color(0xFFC49A2C)
+val Gold400 = Color(0xFFD4AF37)
+val Gold100 = Color(0xFFF7ECD2)
 
 val Neutral0 = Color(0xFFFFFFFF)
 val Neutral10 = Color(0xFFF6F7F9)

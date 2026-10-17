@@ -4,6 +4,7 @@ import com.mosquetracker.app.data.local.MosqueDao
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.detection.GeoUtils
 import com.mosquetracker.app.detection.Haversine
+import com.mosquetracker.app.model.AlertMode
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,6 +24,12 @@ class MosqueRepository @Inject constructor(
     suspend fun add(mosque: MosqueEntity): Long = mosqueDao.insert(mosque)
 
     suspend fun update(mosque: MosqueEntity) = mosqueDao.update(mosque)
+
+    suspend fun setTrackingEnabled(id: Long, enabled: Boolean) =
+        mosqueDao.setTrackingEnabled(id, enabled)
+
+    suspend fun setAlertMode(id: Long, mode: AlertMode) =
+        mosqueDao.setAlertMode(id, mode)
 
     suspend fun delete(mosque: MosqueEntity) = mosqueDao.delete(mosque)
 
