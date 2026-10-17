@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mosquetracker.app.model.MapLayer
 import com.mosquetracker.app.model.RoutineAction
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +28,7 @@ class SettingsStore @Inject constructor(
     private object Keys {
         val MONITORING_ENABLED = booleanPreferencesKey("monitoring_enabled")
         val AUTO_SILENT = booleanPreferencesKey("auto_silent")
+        val MAP_LAYER = stringPreferencesKey("map_layer")
         val ROUTINE_ACTIONS = stringPreferencesKey("routine_actions")
         val ROUTINE_SNAPSHOT = stringPreferencesKey("routine_snapshot")
         val PRAYER_SILENT_ENABLED = booleanPreferencesKey("prayer_silent_enabled")
@@ -92,6 +94,14 @@ class SettingsStore @Inject constructor(
     suspend fun isMonitoringEnabled(): Boolean = monitoringEnabled.first()
 
     suspend fun isAutoSilentEnabled(): Boolean = autoSilent.first()
+
+    /** Which basemap Home draws. Stored by enum name; see [MapLayer.fromStorage]. */
+    val mapLayer: Flow<MapLayer> =
+        context.dataStore.data.map { MapLayer.fromStorage(it[Keys.MAP_LAYER]) }
+
+    suspend fun setMapLayer(layer: MapLayer) {
+        context.dataStore.edit { it[Keys.MAP_LAYER] = layer.name }
+    }
 
     /**
      * Which routine actions the user has armed. Missing key (fresh install, or an install that

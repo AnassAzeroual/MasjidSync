@@ -7,6 +7,7 @@ import com.mosquetracker.app.data.prefs.SettingsStore
 import com.mosquetracker.app.data.repository.MosqueRepository
 import com.mosquetracker.app.location.LocationProvider
 import com.mosquetracker.app.model.LocationSample
+import com.mosquetracker.app.model.MapLayer
 import com.mosquetracker.app.monitoring.MonitoringController
 import com.mosquetracker.app.ui.common.MosquePickRequest
 import com.mosquetracker.app.ui.common.PickRequest
@@ -47,6 +48,10 @@ class HomeViewModel @Inject constructor(
     /** Whether background detection (and therefore arrival alerts) is switched on. */
     val monitoringEnabled: StateFlow<Boolean> = settingsStore.monitoringEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** Basemap the map draws, persisted so the choice survives a restart. */
+    val mapLayer: StateFlow<MapLayer> = settingsStore.mapLayer
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapLayer.STREETS)
 
     private val _nearest = MutableStateFlow<Pair<MosqueEntity, Double>?>(null)
 
@@ -128,6 +133,11 @@ class HomeViewModel @Inject constructor(
 
     fun clearMessage() {
         _message.value = null
+    }
+
+    /** Switches the basemap. Applied to the live map immediately and remembered for next time. */
+    fun setMapLayer(layer: MapLayer) {
+        viewModelScope.launch { settingsStore.setMapLayer(layer) }
     }
 
     fun showMessage(text: String) {

@@ -232,6 +232,20 @@ object AppIcons {
                 "7,-7 7,3.13 7,7 -3.13,7 -7,7z",
         )
     }
+
+    /** Stacked sheets: the map style switcher on Home. */
+    val Layers: ImageVector by lazy {
+        materialIcon(
+            "Layers",
+            "M11.99,18.54l-7.37,-5.73L3,14.07l9,7 9,-7 -1.63,-1.27 -7.38,5.74zM12,16" +
+                "l7.36,-5.73L21,9l-9,-7 -9,7 1.63,1.27L12,16z",
+        )
+    }
+
+    /** Tick: marks the map style currently in use. */
+    val Check: ImageVector by lazy {
+        materialIcon("Check", "M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z")
+    }
 }
 
 private fun materialIcon(name: String, pathData: String): ImageVector =

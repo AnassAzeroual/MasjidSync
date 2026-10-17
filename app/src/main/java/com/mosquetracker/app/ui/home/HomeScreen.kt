@@ -20,6 +20,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -57,6 +60,7 @@ import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.detection.DetectionPipeline
 import com.mosquetracker.app.detection.Haversine
 import com.mosquetracker.app.model.LocationSample
+import com.mosquetracker.app.model.MapLayer
 import com.mosquetracker.app.ui.common.AppIcons
 import com.mosquetracker.app.ui.common.MosquePickRequest
 import com.mosquetracker.app.ui.common.PickRequest
@@ -69,7 +73,6 @@ import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
 import org.osmdroid.events.ZoomEvent
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -114,7 +117,9 @@ private const val TrackedZoneStrokeWidthPx = 2f
  * GPS is the only sensor the app uses; there is no Wi-Fi or Bluetooth tier.
  *
  * Tile downloads are the app's only network use and are entirely optional: with no connection the
- * basemap is blank but the pins, the circle and the picker all still work.
+ * basemap is blank but the pins, the circle and the picker all still work. The basemap itself is
+ * switchable between a street map and satellite imagery (see [MapLayer]); pins, zone circles and
+ * the picker are drawn on top, so they look the same on either.
  */
 @Composable
 fun HomeScreen(
@@ -126,6 +131,7 @@ fun HomeScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val pickRequested by viewModel.pickRequested.collectAsStateWithLifecycle()
     val nearest by viewModel.nearest.collectAsStateWithLifecycle()
+    val mapLayer by viewModel.mapLayer.collectAsStateWithLifecycle()
 
     val foregroundPermissions = remember { RequiredPermissions.foreground() }
     val backgroundPermissions = remember { RequiredPermissions.backgroundLocation() }
@@ -151,7 +157,7 @@ fun HomeScreen(
         }
     }
 
-    val mapView = rememberMosqueMapView()
+    val mapView = rememberMosqueMapView(mapLayer)
     val context = LocalContext.current
     val mosquePin = remember(context) {
         ContextCompat.getDrawable(context, R.drawable.mosque_pin)
@@ -428,6 +434,10 @@ fun HomeScreen(
         )
     }
 
+    // Map style menu. It is offered while picking too: a bare patch of imagery is often the
+    // clearest backdrop for drawing a zone.
+    var layersMenuOpen by remember { mutableStateOf(false) }
+
     ScreenScaffold(
         title = if (picking) "New mosque zone" else "MasjidSync",
         modifier = modifier,
@@ -444,6 +454,30 @@ fun HomeScreen(
             null
         },
         actions = {
+            Box {
+                IconButton(onClick = { layersMenuOpen = true }) {
+                    Icon(AppIcons.Layers, contentDescription = "Map style: ${mapLayer.label}")
+                }
+                DropdownMenu(
+                    expanded = layersMenuOpen,
+                    onDismissRequest = { layersMenuOpen = false },
+                ) {
+                    MapLayer.entries.forEach { layer ->
+                        DropdownMenuItem(
+                            text = { Text(layer.label) },
+                            onClick = {
+                                layersMenuOpen = false
+                                viewModel.setMapLayer(layer)
+                            },
+                            leadingIcon = if (layer == mapLayer) {
+                                { Icon(AppIcons.Check, contentDescription = null) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                }
+            }
             if (!picking && mosques.isNotEmpty()) {
                 IconButton(
                     onClick = {
@@ -557,6 +591,13 @@ fun HomeScreen(
                         onClick = { beginPicking(PickRequest.CurrentFix) },
                     )
                 }
+
+                // Credit for the basemap in use. OpenStreetMap and Esri both hand out their tiles
+                // on the condition that this stays visible, so it belongs on the map itself.
+                MapCredit(
+                    text = mapLayer.credit,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
             }
         }
     }
@@ -608,6 +649,26 @@ private fun SaveCurrentPositionButton(enabled: Boolean, onClick: () -> Unit) {
     ) {
         Icon(AppIcons.LocationOn, contentDescription = null)
         Text("  Save Current Position as Mosque")
+    }
+}
+
+/** Small print under the map naming whoever supplied the tiles currently on screen. */
+@Composable
+private fun MapCredit(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        shadowElevation = 2.dp,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
     }
 }
 
@@ -825,19 +886,29 @@ private fun PermissionBanner(
  *
  * osmdroid keeps a tile-download queue that must be paused when the app goes to the background, and
  * a detached [MapView] cannot be reused, so the view lives and dies with this screen.
+ *
+ * [initialLayer] seeds the very first draw; later changes arrive through the [LaunchedEffect],
+ * which re-points the tile provider at the newly chosen source.
  */
 @Composable
-private fun rememberMosqueMapView(): MapView {
+private fun rememberMosqueMapView(initialLayer: MapLayer): MapView {
     val context = LocalContext.current
     val mapView = remember(context) {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(initialLayer.tileSource)
             setMultiTouchControls(true)
             setUseDataConnection(true)
             isTilesScaledToDpi = true
             controller.setZoom(DefaultZoom)
             controller.setCenter(DefaultTarget)
         }
+    }
+
+    // Switching basemaps keeps the camera, the pins and the zones: only the tiles change, and
+    // each source caches its own tiles under its own name, so the two never mix.
+    LaunchedEffect(initialLayer) {
+        mapView.setTileSource(initialLayer.tileSource)
+        mapView.invalidate()
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {

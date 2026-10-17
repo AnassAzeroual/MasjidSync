@@ -42,6 +42,9 @@ Snapshot at time of writing:
   Settings toggles + search + routine editor, editor sheet, full save flow) — see §8.
 - Emulator: **working** (after the Media Foundation workaround, §8) — app installs and launches on
   `Medium_Phone`; core flows verified via `uiautomator` + screenshots, see §8.
+- Map styles: **switchable** from the Home app bar — *Streets* (OpenStreetMap) and *Satellite*
+  (Esri World Imagery), remembered across restarts (`map_layer` in DataStore). Verified on the
+  emulator and on the S25; both layers' attribution is drawn under the map (§5.21).
 
 ---
 
@@ -50,7 +53,9 @@ Snapshot at time of writing:
 - Repo root / only module host: `C:\Users\devtips\Documents\MosqueTracker` (its **own** git repo,
   branch `main`). It is **not** inside and **not** related to the sibling `Gharib_Qoran_App` repo.
 - Single Gradle module: `:app`. Version catalog: `gradle/libs.versions.toml`.
-- No CI, no remote configured yet.
+- Remote: **`origin` → `https://github.com/AnassAzeroual/MasjidSync.git`** (public, branch `main`).
+  No CI configured. Pushing uses the Git Credential Manager credential for `AnassAzeroual`; `gh`
+  CLI is **not** installed.
 
 ---
 
@@ -80,7 +85,7 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 
 | # | Screen | Package |
 |---|--------|---------|
-| 1 | Home — OSM map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
+| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), basemap switcher in the app bar (Streets / Satellite), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
 | 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math) + next-prayer countdown, prayer silence buffer | `ui/qibla` |
 | 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches, "not possible on Android" list | `ui/settings` |
@@ -237,6 +242,16 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     write while a ring-mode action is armed (redundant in that case: the ring mode already mutes
     those streams), and the Settings row reads "already handled by the ring mode". Do not "fix" the
     skip without re-testing a full armed cycle on `MUTE_SYSTEM` + `SILENT_RINGER`.
+21. **The satellite basemap needs a hand-built tile source.** `model/MapLayer.kt` is the catalogue
+    (label, description, credit, `tileSource`); the stored value is the enum name (`map_layer`),
+    decoded by `MapLayer.fromStorage`, which falls back to `STREETS` for anything unknown. Esri's
+    service wants `{z}/{y}/{x}` — **row before column** — while every source osmdroid 6.1.20 ships
+    (`XYTileSource` included) concatenates `{base}/{z}/{x}/{y}`, so the enum's private
+    `OnlineTileSourceBase` subclass builds the URL itself from `MapTileIndex`. Max zoom is 19,
+    which is where that imagery ends, and osmdroid clamps the map to the source's range. Both
+    layers' licences require the credit to stay visible, so `MapCredit` draws it on the map, never
+    in Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
+    zone polygons and the picker are overlays, and each source caches under its own name.
 
 ---
 
@@ -398,8 +413,10 @@ directories the emulator loads from:
    exit actions put the originals back. Confirm Settings stops showing *Restore now*.
 4. Confirm an `attendance_logs` row appears in History with the right method.
 5. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
-6. Reboot the device; confirm monitoring restarts (boot receiver).
-7. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
+6. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the credit
+   under the map changes, then confirm the choice survives an app restart.
+7. Reboot the device; confirm monitoring restarts (boot receiver).
+8. Battery: leave monitoring on for a few hours and check drain / OEM process killing.
 
 ---
 

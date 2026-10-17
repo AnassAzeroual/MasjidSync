@@ -14,17 +14,32 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 
 | # | Screen | Where | Purpose |
 |---|--------|-------|---------|
-| 1 | **Home** | `ui/home` | Mosque map with Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere. |
+| 1 | **Home** | `ui/home` | Mosque map with Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API when online, cached day or solar math offline) with next-prayer countdown, and the prayer silence buffer toggle. |
 | 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs and a "not possible on Android" list — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
 
 Bottom navigation (`ui/MainScreen.kt`) switches between the four tabs. The map's app bar has
-*show all mosques* and *centre on my location* actions; the camera follows your fix until you pan,
-then it is yours. Settings hands new mosques to Home through a one-shot
+*map style*, *show all mosques* and *centre on my location* actions; the camera follows your fix
+until you pan, then it is yours. Settings hands new mosques to Home through a one-shot
 `MosquePickRequest`: map-centre pick, current-fix pick, or a searched place the camera flies to.
 A Quick Settings tile (`service/MonitoringTileService.kt`) toggles background detection without
 opening the app.
+
+### Map styles
+
+The app bar's layers button switches the basemap, and the choice is remembered. Both layers are
+keyless, so nothing here is billed and nothing needs an account:
+
+| Layer | Tiles | Credit shown under the map |
+|-------|-------|----------------------------|
+| **Streets** (default) | OpenStreetMap standard, the one osmdroid ships with | © OpenStreetMap contributors |
+| **Satellite** | Esri World Imagery (`model/MapLayer.kt` builds the `{z}/{y}/{x}` URL by hand — osmdroid's own sources all emit `{z}/{x}/{y}`) | Imagery © Esri, Maxar, Earthstar Geographics |
+
+Both providers hand out tiles on condition that the credit stays visible, so it is drawn on the map
+itself rather than buried in Settings. Switching styles changes only the tiles: pins, zone circles
+and the picker are overlays, so they look identical on either, and each source caches under its own
+name so the two never mix.
 
 ---
 
@@ -112,7 +127,7 @@ Kotlin + Jetpack Compose, single-activity, MVVM. Versions live in `gradle/libs.v
 | Async | Coroutines / Flow |
 | Background | WorkManager **2.12.0** + foreground service (`foregroundServiceType="location"`) |
 | Location | Play Services `play-services-location` **21.4.0** (`GeofencingClient` + fused location) |
-| Map | OpenStreetMap via `osmdroid-android` **6.1.20** — free tiles, no API key; blank basemap offline, pins and picker still work |
+| Map | OpenStreetMap (Streets) + Esri World Imagery (Satellite) via `osmdroid-android` **6.1.20** — free tiles, no API key; blank basemap offline, pins and picker still work |
 | Search | Platform `Geocoder` (no key, no dependency); listener API on 33+, blocking call on `Dispatchers.IO` below |
 | SDK | `minSdk 26`, `compileSdk 37`, `targetSdk 37` |
 | App id | `com.mosquetracker.app` (debug builds use the `.debug` suffix) |
@@ -298,6 +313,10 @@ are local-only, and a sync layer can be added later without changing the tables.
 7. **Prayer times are computed offline** (MWL convention) and land within ~10 minutes of published
    timetables — fine for a ±15 min silence buffer, not authoritative. Where twilight never gets
    deep enough (high-latitude summer), Fajr/Isha fall back to the seventh-of-night rule.
+8. **The satellite layer builds its own tile URL.** esri's service wants `{z}/{y}/{x}` (row before
+   column) while every tile source osmdroid ships emits `{base}/{z}/{x}/{y}`, so `MapLayer.kt`
+   subclasses `OnlineTileSourceBase` and assembles the URL itself. Its zoom stops at 19, where
+   this imagery ends.
 
 ---
 
