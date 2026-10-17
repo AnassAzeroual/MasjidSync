@@ -45,6 +45,10 @@ Snapshot at time of writing:
 - Map styles: **switchable** from the Home app bar — *Streets* (OpenStreetMap) and *Satellite*
   (Esri World Imagery), remembered across restarts (`map_layer` in DataStore). Verified on the
   emulator and on the S25; both layers' attribution is drawn under the map (§5.21).
+- You-are-here: a **blue dot** at the live fix, added last to the overlay list so it draws over the
+  pins; hidden until there is a fix and moved on every update. Its accuracy halo only appears when
+  the fix is looser than the dot (~30 m) and is dropped above 200 m. Verified on the emulator
+  (dot follows mock fixes, leaves and returns with them) and on the S25.
 
 ---
 
@@ -85,7 +89,7 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 
 | # | Screen | Package |
 |---|--------|---------|
-| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), basemap switcher in the app bar (Streets / Satellite), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
+| 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), Inside/Outside pill, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
 | 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math) + next-prayer countdown, prayer silence buffer | `ui/qibla` |
 | 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches, "not possible on Android" list | `ui/settings` |
@@ -252,6 +256,14 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     layers' licences require the credit to stay visible, so `MapCredit` draws it on the map, never
     in Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
     zone polygons and the picker are overlays, and each source caches under its own name.
+22. **The you-are-here dot is added to the overlay list unconditionally and toggled with
+    `isEnabled`.** The list is cleared and rebuilt by the `LaunchedEffect(mosques, picking)` effect,
+    so a dot that was added/removed on fix changes would race that rebuild (get dropped, or be
+    re-added behind it). It is instead added in the rebuild (halo under the zones, dot last so it
+    draws over the pins) and the fix effect only moves it, hides it while `location == null`, and
+    resizes the halo. Disabled overlays are skipped by osmdroid for both drawing *and* tap routing,
+    which is why the dot also swallows its own taps (`setOnMarkerClickListener { _, _ -> true }`) —
+    otherwise a tap on it would open an info bubble or, while picking, place a zone under the dot.
 
 ---
 
@@ -407,7 +419,8 @@ directories the emulator loads from:
 ## 9. MANUAL CHECKLIST (run on real hardware)
 
 1. Grant foreground location → "Allow all the time" → notifications → DND access from Home/Settings.
-2. Save your current position as a mosque; confirm the pin, the green circle and the instant check-in.
+2. Save your current position as a mosque; confirm the pin, the green circle, the blue dot on your
+   own position and the instant check-in.
 3. Arm a few routine actions in Settings (e.g. *Silent ringer* + *Mute media* + *Dim the screen*),
    then walk/teleport across the zone boundary; confirm each armed action lands on entry and the
    exit actions put the originals back. Confirm Settings stops showing *Restore now*.

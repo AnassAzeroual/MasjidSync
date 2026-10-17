@@ -112,6 +112,20 @@ private val TrackedZoneStrokeColor = 0x990B5D33.toInt()
 private const val TrackedZoneStrokeWidthPx = 2f
 
 /**
+ * "You are here" accuracy halo: light blue so it never reads as one of the green detection zones,
+ * and pale enough that a mosque circle drawn over it stays legible.
+ */
+private const val LocationAccuracyFillColor = 0x1A1A73E8
+private val LocationAccuracyStrokeColor = 0x661A73E8.toInt()
+private const val LocationAccuracyStrokeWidthPx = 1.5f
+
+/**
+ * Above this accuracy the halo is not drawn at all — only the dot is. A fix that loose would paint
+ * a blue wash over the whole screen (and over every zone in it) while telling the user little.
+ */
+private const val MaxAccuracyHaloMeters = 200f
+
+/**
  * Home: the map, the Inside/Outside pill, the gold save button and the status card.
  *
  * GPS is the only sensor the app uses; there is no Wi-Fi or Bluetooth tier.
@@ -292,6 +306,25 @@ fun HomeScreen(
         )
     }
 
+    // "You are here". The dot marks the live fix; the halo around it is that fix's own accuracy.
+    // Both go into the overlay list unconditionally and are merely switched off while there is no
+    // fix, so nothing is added or removed behind the rebuild effect's back.
+    val locationDot = remember(mapView, context) {
+        Marker(mapView).apply {
+            icon = ContextCompat.getDrawable(context, R.drawable.current_location_dot)
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            // Swallow taps: no info bubble over the dot, and no picking a zone under it either.
+            setOnMarkerClickListener { _, _ -> true }
+        }
+    }
+    val locationHalo = remember(mapView) {
+        Polygon(mapView).apply {
+            fillPaint.color = LocationAccuracyFillColor
+            outlinePaint.color = LocationAccuracyStrokeColor
+            outlinePaint.strokeWidth = LocationAccuracyStrokeWidthPx
+        }
+    }
+
     val pickerMarker = remember(mapView, mosquePin) {
         Marker(mapView).apply {
             // Explicit icon (same green pin as saved mosques): never the shared osmdroid
@@ -343,6 +376,8 @@ fun HomeScreen(
         // Added first on purpose: osmdroid offers a tap to the *last* overlay first, so the event
         // catcher has to sit underneath the markers for them to keep their own gestures.
         mapView.overlays.add(tapOverlay)
+        // The accuracy halo sits under the zones (it is context for the dot, not a detection area).
+        mapView.overlays.add(locationHalo)
         if (picking) {
             // Existing pins are hidden so the pending zone is the only thing the user reads.
             mapView.overlays.add(pickerCircle)
@@ -379,6 +414,30 @@ fun HomeScreen(
                         }
                     },
                 )
+            }
+        }
+        // Added last, so "where am I" is drawn over the pins rather than under them.
+        mapView.overlays.add(locationDot)
+        mapView.invalidate()
+    }
+
+    // Every new fix moves the dot and resizes the halo. Without a fix both stay hidden, which is
+    // also what happens when the location permission has not been granted yet.
+    LaunchedEffect(location) {
+        val sample = location
+        if (sample == null) {
+            locationDot.isEnabled = false
+            locationHalo.isEnabled = false
+        } else {
+            val point = GeoPoint(sample.latitude, sample.longitude)
+            locationDot.position = point
+            locationDot.isEnabled = true
+            val accuracy = sample.accuracyMeters
+            if (accuracy > 0f && accuracy <= MaxAccuracyHaloMeters) {
+                locationHalo.points = Polygon.pointsAsCircle(point, accuracy.toDouble())
+                locationHalo.isEnabled = true
+            } else {
+                locationHalo.isEnabled = false
             }
         }
         mapView.invalidate()

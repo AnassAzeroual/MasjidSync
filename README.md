@@ -14,7 +14,7 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 
 | # | Screen | Where | Purpose |
 |---|--------|-------|---------|
-| 1 | **Home** | `ui/home` | Mosque map with Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere. The app bar switches the basemap between **Streets** and **Satellite**. |
+| 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, Inside/Outside pill, gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API when online, cached day or solar math offline) with next-prayer countdown, and the prayer silence buffer toggle. |
 | 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs and a "not possible on Android" list — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
@@ -40,6 +40,18 @@ Both providers hand out tiles on condition that the credit stays visible, so it 
 itself rather than buried in Settings. Switching styles changes only the tiles: pins, zone circles
 and the picker are overlays, so they look identical on either, and each source caches under its own
 name so the two never mix.
+
+### You are here
+
+The live fix is marked with a blue dot (`drawable/current_location_dot.xml`), drawn over the pins so
+it is never hidden. It appears only once there is a fix, and it follows every update — pan the map
+away from yourself and the dot stays where you actually are.
+
+Around it, a pale blue circle shows the fix's **accuracy**, and it is deliberately drawn only when
+that accuracy is looser than the dot itself (under ~30 m the dot would cover it anyway). So at a
+normal GPS fix you see just the dot, and when the phone is struggling — indoors, or on a network
+fix — you get a visible halo saying *somewhere in here*. Above 200 m the halo is dropped entirely,
+since a circle that size would wash out every detection zone on screen while telling you nothing.
 
 ---
 

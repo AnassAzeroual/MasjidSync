@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "You are here": the blue dot the map drops on the live GPS fix. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- White halo first, so the dot still reads on dark satellite imagery. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,3C16.97,3 21,7.03 21,12C21,16.97 16.97,21 12,21C7.03,21 3,16.97 3,12C3,7.03 7.03,3 12,3Z" />
+    <path
+        android:fillColor="#1A73E8"
+        android:pathData="M12,5.5C15.59,5.5 18.5,8.41 18.5,12C18.5,15.59 15.59,18.5 12,18.5C8.41,18.5 5.5,15.59 5.5,12C5.5,8.41 8.41,5.5 12,5.5Z" />
+</vector>
