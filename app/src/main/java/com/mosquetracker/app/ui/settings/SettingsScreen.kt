@@ -45,7 +45,6 @@ import com.mosquetracker.app.detection.DetectionPipeline
 import com.mosquetracker.app.model.ActionGroup
 import com.mosquetracker.app.model.ActionRequirement
 import com.mosquetracker.app.model.AlertMode
-import com.mosquetracker.app.model.BLOCKED_ACTIONS
 import com.mosquetracker.app.model.RoutineAction
 import com.mosquetracker.app.ui.common.AppIcons
 import com.mosquetracker.app.ui.common.PermissionBanners
@@ -221,9 +220,6 @@ fun SettingsScreen(
                     }
                 }
             }
-
-            Text("Not possible on Android", style = MaterialTheme.typography.titleLarge)
-            BlockedActionsCard()
         }
     }
 }
@@ -458,36 +454,6 @@ private fun AccessHint(text: String, buttonText: String, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.error,
         )
         TextButton(onClick = onClick) { Text(buttonText) }
-    }
-}
-
-/** The honest list of phone switches Android keeps for itself. */
-@Composable
-private fun BlockedActionsCard() {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-
-    SectionCard {
-        Text(
-            text = "These exist on the phone but no app is allowed to flip them. " +
-                "Tap to see the full list and the reason.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(onClick = { expanded = !expanded }) {
-            Text(if (expanded) "Hide the list" else "Show ${BLOCKED_ACTIONS.size} unavailable actions")
-        }
-        if (expanded) {
-            BLOCKED_ACTIONS.forEach { blocked ->
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(blocked.label, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = blocked.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
     }
 }
 

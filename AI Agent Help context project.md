@@ -139,7 +139,7 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 | 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold save button, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one) | `ui/home` |
 | 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math; rolls at midnight) + next-prayer countdown (tomorrow's Fajr after Isha), prayer silence buffer | `ui/qibla` |
-| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches, "not possible on Android" list | `ui/settings` |
+| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only), place search, monitoring switches | `ui/settings` |
 
 Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off, `AppIcons`,
 `Permissions` (`PermissionStatus` + `PermissionBanners`), `SystemSettings` (settings-page intents),
@@ -218,9 +218,8 @@ pending rather than silently dropping it, and Settings offers **Restore now** as
 Nothing calls `RoutineEngine.apply/revert` directly any more except `RoutineCoordinator`; Settings,
 the presence engine, the prayer workers and the monitoring controller all call `reconcile()`.
 
-Actions Android reserves for the system are listed in `BLOCKED_ACTIONS` and shown in Settings so
-the user sees the full menu and the reason (Wi-Fi/Bluetooth toggling, battery saver, mobile data,
-airplane mode, lock-now, background-data restrictions).
+Actions Android reserves for the system are not offered at all — the routine editor only lists
+switches the app can actually flip, so nothing armed can silently fail to run.
 
 ### Database (Room, schema exported to `app/schemas/`, currently **v4**)
 
@@ -774,8 +773,8 @@ directories the emulator loads from:
    deep enough (high-latitude summer), Fajr/Isha fall back to the seventh-of-night rule.
 8. `MUTE_SYSTEM` is skipped when a ring-mode action is armed (§5.20) — the ring mode already mutes
    the streams it governs, and writing them separately lets the platform re-derive the ring mode.
-   Actions Android reserves for the system are not built at all; they are listed in
-   `RoutineAction.BLOCKED_ACTIONS` and shown in Settings with the reason.
+   Actions Android reserves for the system are not built at all: the editor offers only switches the
+   app is allowed to flip, so nothing armed can silently fail to run.
 
 Network sync of attendance is intentionally **out of scope** for the MVP; the schema and repositories
 are local-only and a sync layer can be added later without changing the tables.

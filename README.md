@@ -41,8 +41,8 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
   visit. Each mosque can also stop being tracked without being deleted.
 - A guard warns when sound is muted but no ringer action is armed (*calls can still ring*), with a
   one-tap **Set silent** fix.
-- Actions Android does not allow apps to take (Wi-Fi, Bluetooth, airplane mode and similar) are
-  listed with the reason.
+- The editor only offers switches Android actually allows the app to flip, so nothing you can arm
+  silently fails to run.
 
 **Map (Home)**
 - **Streets** (OpenStreetMap) or **Satellite** (Esri World Imagery) basemaps, with the choice
@@ -102,7 +102,7 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 | 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, a presence pill (*Outside Zone*, *Inside Zone* once the visit is logged, or *confirming…* / *GPS too weak to confirm* / *detection off* / *Leaving zone* while the app has not acted yet), one status banner at a time (missing location grant, detection off while inside, Do Not Disturb access needed, notifications), gold "Save Current Position as Mosque" button and the zone picker with its editor sheet (name + 20–100 m radius slider + Save & Activate). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API, Moroccan method, when online; cached day or Muslim World League solar math offline; rolls over at midnight) with next-prayer countdown (tomorrow's Fajr after Isha), and the prayer silence buffer toggle. |
-| 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs and a "not possible on Android" list — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
+| 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs — plus per-mosque tracking toggles + arrival mode (full silent / notify only), "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
 
 Bottom navigation (`ui/MainScreen.kt`) switches between the four tabs. The map's app bar has
 *map style*, *show all mosques* and *centre on my location* actions; the camera follows your fix
@@ -211,10 +211,6 @@ left alone. Grant DND access for a fully silent ringer (`RoutineEngine.ringTarge
 > moment later, undoing a silent ringer. The engine therefore skips that write whenever a ring-mode
 > action is armed — the ring mode already mutes those streams — re-asserts the ring mode last, and
 > the Settings row says "already handled by the ring mode".
-
-Actions Android reserves for the system are listed in `RoutineAction.BLOCKED_ACTIONS` and shown in
-Settings so the full menu is visible with the reason: Wi-Fi/Bluetooth toggling, battery saver, mobile
-data, airplane mode, locking the screen now, and restricting background data.
 
 The card also guards the easiest mistake in the whole app: muting every stream while leaving the
 ringer alone, which produces a phone that still rings inside the mosque. When no ringer action is
