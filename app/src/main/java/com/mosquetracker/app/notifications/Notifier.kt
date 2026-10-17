@@ -73,19 +73,21 @@ class Notifier @Inject constructor(
         runCatching { manager.notify(FOREGROUND_ID, foregroundNotification(mosqueCount)) }
     }
 
-    fun notifyEntry(mosqueName: String, method: DetectionMethod) {
+    fun notifyEntry(mosqueId: Long, mosqueName: String, method: DetectionMethod) {
         notify(
+            mosqueId,
             title = "You're inside $mosqueName",
             text = "Visit logged — detected by ${method.label()}.",
         )
     }
 
-    fun notifyExit(mosqueName: String) {
-        notify(title = "Left $mosqueName", text = "Visit closed in your log.")
+    fun notifyExit(mosqueId: Long, mosqueName: String) {
+        notify(mosqueId, title = "Left $mosqueName", text = "Visit closed in your log.")
     }
 
+    // One slot per mosque: the exit notice replaces that visit's entry notice instead of piling up.
     @SuppressLint("MissingPermission")
-    private fun notify(title: String, text: String) {
+    private fun notify(mosqueId: Long, title: String, text: String) {
         if (!canPostNotifications()) return
         val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mosque)
@@ -95,7 +97,7 @@ class Notifier @Inject constructor(
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(openAppIntent())
             .build()
-        runCatching { manager.notify(System.currentTimeMillis().toInt(), notification) }
+        runCatching { manager.notify("$VISIT_TAG$mosqueId", VISIT_ID, notification) }
     }
 
     private fun canPostNotifications(): Boolean =
@@ -126,5 +128,7 @@ class Notifier @Inject constructor(
         const val DETECTION_CHANNEL_ID = "detection"
         const val EVENTS_CHANNEL_ID = "events"
         const val FOREGROUND_ID = 1001
+        private const val VISIT_TAG = "visit-"
+        private const val VISIT_ID = 1
     }
 }

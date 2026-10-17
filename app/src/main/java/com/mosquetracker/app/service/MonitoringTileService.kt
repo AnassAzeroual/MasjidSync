@@ -44,7 +44,7 @@ class MonitoringTileService : TileService() {
             if (settingsStore.isMonitoringEnabled()) {
                 monitoringController.disableMonitoring()
             } else {
-                monitoringController.enableMonitoring()
+                monitoringController.enableMonitoring(fromBackground = true)
             }
             refresh()
         }

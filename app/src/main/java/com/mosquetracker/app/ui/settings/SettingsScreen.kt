@@ -1,8 +1,5 @@
 package com.mosquetracker.app.ui.settings
 
-import android.content.Context
-import android.content.Intent
-import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,8 +13,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,7 +26,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,7 +36,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -55,12 +48,13 @@ import com.mosquetracker.app.model.AlertMode
 import com.mosquetracker.app.model.BLOCKED_ACTIONS
 import com.mosquetracker.app.model.RoutineAction
 import com.mosquetracker.app.ui.common.AppIcons
+import com.mosquetracker.app.ui.common.PermissionBanners
 import com.mosquetracker.app.ui.common.EmptyState
-import com.mosquetracker.app.ui.common.RequiredPermissions
 import com.mosquetracker.app.ui.common.ScreenScaffold
 import com.mosquetracker.app.ui.common.SectionCard
-import com.mosquetracker.app.ui.common.rememberPermissionLauncher
-import com.mosquetracker.app.ui.common.rememberPermissionsGranted
+import com.mosquetracker.app.ui.common.openNotificationPolicySettings
+import com.mosquetracker.app.ui.common.openWriteSettings
+import com.mosquetracker.app.ui.common.rememberPermissionStatus
 
 @Composable
 fun SettingsScreen(
@@ -77,16 +71,10 @@ fun SettingsScreen(
     val online by viewModel.online.collectAsStateWithLifecycle()
     val searching by viewModel.searching.collectAsStateWithLifecycle()
     val searchMessage by viewModel.searchMessage.collectAsStateWithLifecycle()
+    val fenceState by viewModel.fenceState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    val foregroundPermissions = remember { RequiredPermissions.foreground() }
-    val backgroundPermissions = remember { RequiredPermissions.backgroundLocation() }
-    val foregroundGranted by rememberPermissionsGranted(foregroundPermissions)
-    val backgroundGranted by rememberPermissionsGranted(backgroundPermissions)
-    val launcher = rememberPermissionLauncher {
-        viewModel.refreshOnline()
-        viewModel.refreshAccess()
-    }
+    val permissions = rememberPermissionStatus(onResult = viewModel::onPermissionsChanged)
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.refreshOnline()
@@ -111,21 +99,7 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (!foregroundGranted) {
-                PermissionBanner(
-                    title = "Location permission required",
-                    message = "MasjidSync needs GPS to show the map and to tell when you arrive.",
-                    buttonText = "Grant",
-                    onClick = { launcher.launch(foregroundPermissions.toTypedArray()) },
-                )
-            } else if (!backgroundGranted) {
-                PermissionBanner(
-                    title = "Allow background location",
-                    message = "Choose \"Allow all the time\" so mosque detection keeps working when the app is closed.",
-                    buttonText = "Allow",
-                    onClick = { launcher.launch(backgroundPermissions.toTypedArray()) },
-                )
-            }
+            PermissionBanners(status = permissions)
 
             Text("My Routine", style = MaterialTheme.typography.titleLarge)
             RoutineCard(
@@ -214,9 +188,15 @@ fun SettingsScreen(
 
             Text("Monitoring", style = MaterialTheme.typography.titleLarge)
             SectionCard {
+                val detection = detectionSummary(
+                    monitoringEnabled = monitoringEnabled,
+                    fenceState = fenceState,
+                    trackedIds = mosques.filter { it.trackingEnabled }.mapTo(mutableSetOf()) { it.id },
+                )
                 SwitchRow(
                     title = "Background detection",
-                    subtitle = "Foreground service + geofences for ${mosques.count { it.trackingEnabled }} tracked mosque(s)",
+                    subtitle = detection.text,
+                    subtitleIsProblem = detection.problem,
                     checked = monitoringEnabled,
                     onCheckedChange = viewModel::setMonitoring,
                 )
@@ -573,7 +553,8 @@ private fun RoutineRow(
     }
 }
 
-/** One mosque with its tracking switch. Off renders gold, echoing the design mock. */@Composable
+/** One mosque with its tracking switch. Off renders gold, echoing the design mock. */
+@Composable
 private fun TrackingRow(
     mosque: MosqueEntity,
     onToggle: (Boolean) -> Unit,
@@ -630,6 +611,7 @@ private fun SwitchRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    subtitleIsProblem: Boolean = false,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -640,7 +622,11 @@ private fun SwitchRow(
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (subtitleIsProblem) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
         Switch(
@@ -653,42 +639,4 @@ private fun SwitchRow(
             ),
         )
     }
-}
-
-@Composable
-private fun PermissionBanner(
-    title: String,
-    message: String,
-    buttonText: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(message, style = MaterialTheme.typography.bodyMedium)
-            Button(onClick = onClick) { Text(buttonText) }
-        }
-    }
-}
-
-private fun Context.openNotificationPolicySettings() {
-    val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { startActivity(intent) }
-}
-
-/** Opens the per-app "Modify system settings" screen, the only way to earn WRITE_SETTINGS. */
-private fun Context.openWriteSettings() {
-    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
-        .setData("package:$packageName".toUri())
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { startActivity(intent) }
 }

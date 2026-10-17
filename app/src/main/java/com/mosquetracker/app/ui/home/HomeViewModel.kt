@@ -9,11 +9,15 @@ import com.mosquetracker.app.data.repository.AttendanceRepository
 import com.mosquetracker.app.data.repository.MosqueRepository
 import com.mosquetracker.app.detection.DetectionPipeline
 import com.mosquetracker.app.detection.Haversine
+import com.mosquetracker.app.detection.TriggerSource
 import com.mosquetracker.app.detection.ZoneWatch
 import com.mosquetracker.app.location.LocationProvider
+import com.mosquetracker.app.model.ActionPhase
+import com.mosquetracker.app.model.ActionRequirement
 import com.mosquetracker.app.model.LocationSample
 import com.mosquetracker.app.model.MapLayer
 import com.mosquetracker.app.monitoring.MonitoringController
+import com.mosquetracker.app.routine.RoutineEngine
 import com.mosquetracker.app.ui.common.MosquePickRequest
 import com.mosquetracker.app.ui.common.PickRequest
 import com.mosquetracker.app.work.VerificationWorker
@@ -24,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -39,6 +44,7 @@ class HomeViewModel @Inject constructor(
     private val settingsStore: SettingsStore,
     private val zoneWatch: ZoneWatch,
     private val pickRequest: MosquePickRequest,
+    private val routineEngine: RoutineEngine,
 ) : ViewModel() {
 
     val mosques: StateFlow<List<MosqueEntity>> = mosqueRepository.mosques
@@ -68,16 +74,37 @@ class HomeViewModel @Inject constructor(
     /** Nearest *tracked* mosque and its distance. Untracked mosques never count as nearest. */
     val nearest: StateFlow<Pair<MosqueEntity, Double>?> = _nearest.asStateFlow()
 
+    /** Mosques with a visit open — what the routine is acting on, as opposed to the raw circle. */
+    val openVisitIds: StateFlow<Set<Long>> = attendanceRepository.openVisitIds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    private val _dndGranted = MutableStateFlow(routineEngine.dndAccessGranted)
+
+    /**
+     * True while the routine is on and an armed arrival action needs Do Not Disturb access it does
+     * not have — the case where the phone only vibrates in the mosque instead of going silent.
+     */
+    val dndMissing: StateFlow<Boolean> = combine(
+        settingsStore.monitoringEnabled,
+        settingsStore.autoSilent,
+        settingsStore.routineActions,
+        _dndGranted,
+    ) { monitoring, routine, actions, granted ->
+        monitoring && routine && !granted && actions.any {
+            it.phase == ActionPhase.ON_ARRIVAL && it.requirement == ActionRequirement.DND_ACCESS
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
     private var locationJob: Job? = null
 
-    init {
-        startLocationUpdates()
-    }
-
-    /** (Re)starts the fix collector — called on init and after permission is granted. */
+    /**
+     * (Re)starts the fix collector. The screen calls it on start and after permission is granted,
+     * and [stopLocationUpdates] on stop: brisk GPS is for the visible map only, while the
+     * background service keeps its own, slower watch.
+     */
     fun startLocationUpdates() {
         locationJob?.cancel()
         locationJob = viewModelScope.launch {
@@ -91,6 +118,26 @@ class HomeViewModel @Inject constructor(
                 if (settingsStore.isMonitoringEnabled()) zoneWatch.onFix(sample)
             }
         }
+    }
+
+    fun stopLocationUpdates() {
+        locationJob?.cancel()
+        locationJob = null
+    }
+
+    /** Do Not Disturb access is granted in system settings, so it is re-read on every resume. */
+    fun refreshAccess() {
+        _dndGranted.value = routineEngine.dndAccessGranted
+    }
+
+    /** After a permission prompt: restart the fix collector and let detection use the grant. */
+    fun onPermissionsChanged() {
+        startLocationUpdates()
+        viewModelScope.launch { monitoringController.recheck() }
+    }
+
+    fun enableMonitoring() {
+        viewModelScope.launch { monitoringController.enableMonitoring() }
     }
 
     /**
@@ -136,9 +183,9 @@ class HomeViewModel @Inject constructor(
                     hasOpenVisit = attendanceRepository.hasOpenVisit(mosque.id),
                 )
             }
-            if (transition != null) {
+            if (transition != null && settingsStore.isMonitoringEnabled()) {
                 // The fix that just decided the move is the fix that verifies it.
-                VerificationWorker.enqueue(context, mosque.id, transition, fix)
+                VerificationWorker.enqueue(context, mosque.id, transition, TriggerSource.MOVE, fix)
             }
 
             val radius = DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius).toInt()
@@ -205,8 +252,7 @@ class HomeViewModel @Inject constructor(
 
     fun delete(mosque: MosqueEntity) {
         viewModelScope.launch {
-            mosqueRepository.delete(mosque)
-            monitoringController.removeGeofence(mosque.id)
+            monitoringController.deleteMosque(mosque)
             _message.value = "Deleted ${mosque.name}."
         }
     }

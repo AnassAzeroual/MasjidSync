@@ -135,20 +135,22 @@ class DetectionPipeline @Inject constructor(
          * while the routine stays off. Watching the same fixes the map paints (see ZoneWatch) is
          * what keeps the routine and the red circle in agreement.
          *
-         * EXIT needs the fix to be clearly outside, and this watch is the only place that margin
-         * lives: fence exits and pin moves stay immediate, because those follow an event the
-         * platform or the user has already decided on.
+         * EXIT needs the fix to be clearly outside — past the margin, or past the fix's own error
+         * when that is larger (see [PresenceRules.releaseDistanceMeters]) — and the watch then
+         * waits for the departure to last. Fence exits are re-checked against a fresh fix instead,
+         * and pin moves stay immediate, because the user has already decided on those.
          */
         fun watchTransition(
             distanceMeters: Double,
             configuredRadiusMeters: Int,
             hasOpenVisit: Boolean,
+            accuracyMeters: Float = 0f,
         ): Int? = when {
             !hasOpenVisit && isInsideZone(distanceMeters, configuredRadiusMeters) ->
                 Geofence.GEOFENCE_TRANSITION_ENTER
 
             hasOpenVisit &&
-                distanceMeters > zoneRadiusMeters(configuredRadiusMeters) + RELEASE_MARGIN_METERS ->
+                distanceMeters > PresenceRules.releaseDistanceMeters(configuredRadiusMeters, accuracyMeters) ->
                 Geofence.GEOFENCE_TRANSITION_EXIT
 
             else -> null

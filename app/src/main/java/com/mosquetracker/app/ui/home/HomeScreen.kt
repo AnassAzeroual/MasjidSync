@@ -31,7 +31,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -58,22 +57,27 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mosquetracker.app.R
 import com.mosquetracker.app.data.local.entity.MosqueEntity
 import com.mosquetracker.app.detection.DetectionPipeline
 import com.mosquetracker.app.detection.Haversine
+import com.mosquetracker.app.detection.PresenceRules
 import com.mosquetracker.app.model.LocationSample
 import com.mosquetracker.app.model.MapLayer
+import com.mosquetracker.app.ui.common.AlertBanner
 import com.mosquetracker.app.ui.common.AppIcons
+import com.mosquetracker.app.ui.common.MissingPermission
 import com.mosquetracker.app.ui.common.MosquePickRequest
+import com.mosquetracker.app.ui.common.PermissionBanners
 import com.mosquetracker.app.ui.common.PickRequest
-import com.mosquetracker.app.ui.common.RequiredPermissions
 import com.mosquetracker.app.ui.common.ScreenScaffold
-import com.mosquetracker.app.ui.common.rememberPermissionLauncher
-import com.mosquetracker.app.ui.common.rememberPermissionsGranted
+import com.mosquetracker.app.ui.common.openNotificationPolicySettings
+import com.mosquetracker.app.ui.common.rememberPermissionStatus
 import com.mosquetracker.app.ui.theme.DangerRed
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
@@ -160,12 +164,17 @@ fun HomeScreen(
     val pickRequested by viewModel.pickRequested.collectAsStateWithLifecycle()
     val nearest by viewModel.nearest.collectAsStateWithLifecycle()
     val mapLayer by viewModel.mapLayer.collectAsStateWithLifecycle()
+    val monitoringEnabled by viewModel.monitoringEnabled.collectAsStateWithLifecycle()
+    val openVisitIds by viewModel.openVisitIds.collectAsStateWithLifecycle()
+    val dndMissing by viewModel.dndMissing.collectAsStateWithLifecycle()
 
-    val foregroundPermissions = remember { RequiredPermissions.foreground() }
-    val backgroundPermissions = remember { RequiredPermissions.backgroundLocation() }
-    val foregroundGranted by rememberPermissionsGranted(foregroundPermissions)
-    val backgroundGranted by rememberPermissionsGranted(backgroundPermissions)
-    val launcher = rememberPermissionLauncher { viewModel.startLocationUpdates() }
+    val permissions = rememberPermissionStatus(onResult = viewModel::onPermissionsChanged)
+
+    LifecycleStartEffect(viewModel) {
+        viewModel.startLocationUpdates()
+        onStopOrDispose { viewModel.stopLocationUpdates() }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshAccess() }
 
     var selectedMosqueId by rememberSaveable { mutableStateOf<Long?>(null) }
 
@@ -584,6 +593,13 @@ fun HomeScreen(
     val nearestDistance = nearest?.second
     val inside = nearestMosque != null && nearestDistance != null &&
         DetectionPipeline.isInsideZone(nearestDistance, nearestMosque.geofenceRadius)
+    val presence = ZonePresence.of(
+        hasFix = fix != null,
+        insideMosqueId = nearestMosque?.id?.takeIf { inside },
+        fixUsable = fix != null && PresenceRules.isUsable(fix, System.currentTimeMillis()),
+        monitoringEnabled = monitoringEnabled,
+        openVisitIds = openVisitIds,
+    )
 
     val canSave = picking && pickName.isNotBlank() && centreLat != null && centreLon != null && !saving
 
@@ -702,8 +718,7 @@ fun HomeScreen(
                 )
             } else if (!picking) {
                 ZonePill(
-                    inside = inside,
-                    hasFix = fix != null,
+                    presence = presence,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 12.dp),
@@ -717,19 +732,34 @@ fun HomeScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (!foregroundGranted) {
-                    PermissionBanner(
-                        title = "Location permission required",
-                        message = "MasjidSync needs GPS to show the map and to tell when you arrive.",
-                        buttonText = "Grant",
-                        onClick = { launcher.launch(foregroundPermissions.toTypedArray()) },
+                // One banner at most, so the map stays visible: location grants first (nothing
+                // works without them), then what stops the routine, then notifications.
+                val locationMissing = permissions.missing.filter { it != MissingPermission.NOTIFICATIONS }
+                when {
+                    locationMissing.isNotEmpty() -> PermissionBanners(
+                        status = permissions,
+                        shown = locationMissing.take(1),
                     )
-                } else if (!backgroundGranted) {
-                    PermissionBanner(
-                        title = "Allow background location",
-                        message = "Choose \"Allow all the time\" so mosque detection keeps working when the app is closed.",
-                        buttonText = "Allow",
-                        onClick = { launcher.launch(backgroundPermissions.toTypedArray()) },
+
+                    presence == ZonePresence.DETECTION_OFF && nearestMosque != null -> AlertBanner(
+                        title = "Detection is off",
+                        message = "You are inside ${nearestMosque.name}, but background detection " +
+                            "is switched off, so the routine will not run.",
+                        actionText = "Turn on",
+                        onAction = viewModel::enableMonitoring,
+                    )
+
+                    dndMissing -> AlertBanner(
+                        title = "Do Not Disturb access needed",
+                        message = "Without it the routine can only set the phone to vibrate, " +
+                            "not silent, and skips its Do Not Disturb actions.",
+                        actionText = "Grant",
+                        onAction = { context.openNotificationPolicySettings() },
+                    )
+
+                    MissingPermission.NOTIFICATIONS in permissions.missing -> PermissionBanners(
+                        status = permissions,
+                        shown = listOf(MissingPermission.NOTIFICATIONS),
                     )
                 }
 
@@ -795,31 +825,46 @@ fun HomeScreen(
     }
 }
 
-/** Floating Inside/Outside pill over the map. */
+/**
+ * Floating status pill over the map. Red whenever the reading is inside a circle — the same answer
+ * the map paints — with a suffix whenever the app has not (or not yet) acted on it.
+ */
 @Composable
-private fun ZonePill(inside: Boolean, hasFix: Boolean, modifier: Modifier = Modifier) {
+private fun ZonePill(presence: ZonePresence, modifier: Modifier = Modifier) {
+    val (container, content) = when (presence) {
+        ZonePresence.INSIDE,
+        ZonePresence.CONFIRMING,
+        ZonePresence.WEAK_FIX,
+        ZonePresence.DETECTION_OFF,
+        -> MaterialTheme.colorScheme.error to MaterialTheme.colorScheme.onError
+
+        ZonePresence.LEAVING ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+
+        ZonePresence.NO_FIX,
+        ZonePresence.OUTSIDE,
+        -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
-        color = when {
-            !hasFix -> MaterialTheme.colorScheme.surfaceVariant
-            inside -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.surfaceVariant
-        },
+        color = container,
         shadowElevation = 4.dp,
     ) {
         Text(
-            text = when {
-                !hasFix -> "Waiting for GPS…"
-                inside -> "Inside Zone"
-                else -> "Outside Zone"
+            text = when (presence) {
+                ZonePresence.NO_FIX -> "Waiting for GPS…"
+                ZonePresence.OUTSIDE -> "Outside Zone"
+                ZonePresence.INSIDE -> "Inside Zone"
+                ZonePresence.CONFIRMING -> "Inside Zone · confirming…"
+                ZonePresence.WEAK_FIX -> "Inside Zone · GPS too weak to confirm"
+                ZonePresence.DETECTION_OFF -> "Inside Zone · detection off"
+                ZonePresence.LEAVING -> "Leaving zone · confirming…"
             },
             style = MaterialTheme.typography.titleMedium,
-            color = when {
-                !hasFix -> MaterialTheme.colorScheme.onSurfaceVariant
-                inside -> MaterialTheme.colorScheme.onError
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = content,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
         )
     }
@@ -962,7 +1007,10 @@ private fun MosqueEditorSheet(
             Text("Radius Slider", style = MaterialTheme.typography.titleMedium)
             Slider(
                 value = radiusMeters.toFloat(),
-                onValueChange = { onRadiusChange(it.toInt()) },
+                // Truncating would turn a thumb resting at 59.99 into 59: snap to the 10 m step.
+                onValueChange = {
+                    onRadiusChange((it / RadiusStepMeters).roundToInt() * RadiusStepMeters)
+                },
                 valueRange = MinRadiusMeters.toFloat()..MaxRadiusMeters.toFloat(),
                 steps = (MaxRadiusMeters - MinRadiusMeters) / RadiusStepMeters - 1,
             )
@@ -1124,30 +1172,6 @@ private fun applyZoneStyle(
     polygon.fillPaint.color = if (inside) ZoneInsideFillColor else restingFill
     polygon.outlinePaint.color = if (inside) ZoneInsideStrokeColor else restingStroke
     polygon.outlinePaint.strokeWidth = if (inside) ZoneInsideStrokeWidthPx else restingWidth
-}
-
-@Composable
-private fun PermissionBanner(
-    title: String,
-    message: String,
-    buttonText: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(message, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = onClick) { Text(buttonText) }
-        }
-    }
 }
 
 /**

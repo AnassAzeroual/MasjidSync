@@ -221,9 +221,11 @@ function Get-UiXml {
 }
 
 function Get-PillState {
+    # The pill also reports what the app has done ("Inside Zone · confirming…", "Leaving zone ·
+    # confirming…" while a visit is still open just past the rim); this script measures the circle.
     $xml = Get-UiXml
     if ($xml -match 'Inside Zone') { return 'Inside' }
-    if ($xml -match 'Outside Zone') { return 'Outside' }
+    if ($xml -match 'Outside Zone|Leaving zone') { return 'Outside' }
     if ($xml -match 'Waiting for GPS') { return 'NoFix' }
     return 'NoPill'
 }
