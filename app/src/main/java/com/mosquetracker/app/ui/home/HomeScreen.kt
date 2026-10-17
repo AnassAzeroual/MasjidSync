@@ -329,7 +329,7 @@ fun HomeScreen(
     // Both go into the overlay list unconditionally and are merely switched off while there is no
     // fix, so nothing is added or removed behind the rebuild effect's back.
     val locationDot = remember(mapView, context) {
-        Marker(mapView).apply {
+        LocationDotMarker(mapView).apply {
             icon = ContextCompat.getDrawable(context, R.drawable.current_location_dot)
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             // Swallow taps: no info bubble over the dot, and no picking a zone under it either.
@@ -1209,6 +1209,21 @@ private fun Marker.keepGrabOffsetOnDrag(touchY: Float, mapView: MapView) {
     val anchorY = mapView.projection.toPixels(position, Point()).y
     val grabOffsetPx = anchorY - touchY
     dragOffset = -grabOffsetPx * 25.4f / mapView.resources.displayMetrics.xdpi
+}
+
+/**
+ * The you-are-here dot.
+ *
+ * It is drawn last, so it sits on top of the pins and can never be hidden by one. Taps are swallowed
+ * there — no info bubble over the dot, and no placing a zone under your own position while picking —
+ * but long presses are deliberately **declined**. osmdroid walks the overlays top-most first and
+ * treats a hit on a marker as an accepted long press even when that marker cannot be dragged, so a
+ * pin dropped exactly on the dot (the natural way to test a zone without walking) would otherwise
+ * become impossible to grab again. Returning false lets the press fall through to the pin
+ * underneath, which starts its drag as usual.
+ */
+private class LocationDotMarker(mapView: MapView) : Marker(mapView) {
+    override fun onLongPress(event: MotionEvent, mapView: MapView): Boolean = false
 }
 
 /** Smallest box containing every point. Callers must pass a non-empty list. */

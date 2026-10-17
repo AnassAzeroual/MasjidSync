@@ -74,10 +74,13 @@ re-registered fence only ever raises an `ENTER` (`INITIAL_TRIGGER_ENTER`) — fu
 `DetectionPipeline.moveTransition`, including why the `EXIT` is only synthesised when that mosque
 actually has an open visit.
 
-Two osmdroid details are worth knowing before touching this code: a marker drag starts from a **long
-press** (`Marker.onLongPress`, not `onTouchEvent`), and osmdroid snaps the marker's anchor onto the
-finger when the drag begins — the app cancels that jump with `Marker.setDragOffset`, otherwise every
-move would be saved off by however far from the tip you grabbed the pin.
+Three osmdroid details are worth knowing before touching this code: a marker drag starts from a
+**long press** (`Marker.onLongPress`, not `onTouchEvent`); osmdroid snaps the marker's anchor onto
+the finger when the drag begins, and the app cancels that jump with `Marker.setDragOffset`, otherwise
+every move would be saved off by however far from the tip you grabbed the pin; and a long press is
+handed to the **top-most** overlay that reports a hit, so the you-are-here dot — drawn last, on
+purpose — declines long presses (`HomeScreen.LocationDotMarker`) and lets a pin sitting on your
+position stay draggable.
 
 ---
 

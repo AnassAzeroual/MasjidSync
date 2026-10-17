@@ -62,7 +62,8 @@ Snapshot at time of writing:
   and runs the matching verification pass itself (§5.24). Verified on `emulator-5554` (grab offset
   exact: a 434 px drag landed within 9 m of the predicted distance, in both directions) and on the
   S25 (dragged onto the phone → red circle, arrival row, routine applied; dragged off → green,
-  visit closed, routine restored).
+  visit closed, routine restored; a pin dropped on the dot stays grabbable — the dot declines long
+  presses, §5.26).
 - Arrival is **watched** while the app runs: `detection/ZoneWatch.kt` runs
   `DetectionPipeline.watchTransition` over every fix Home collects, and every trigger carries the
   fix it was decided on into `VerificationWorker` (dragged pin, fresh save, watch) — the reading
@@ -371,6 +372,18 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     Fixed alongside: `AttendanceRepository.recordEntry` guards its check-then-insert with a `Mutex` —
     two triggers landing together had produced two open rows with identical timestamps (rows 16/17 in
     the emulator's history).
+26. **The you-are-here dot declines long presses, so a pin under it stays draggable.** osmdroid's
+    `DefaultOverlayManager.onLongPress` walks the overlays *reversed* (top-most first) and stops at
+    the first one whose `Overlay.onLongPress` returns true — and `Marker.onLongPress` returns its hit
+    test **whether or not the marker is draggable** (bytecode checked in `osmdroid-android-6.1.20`).
+    The dot is added last on purpose (drawn over the pins), so a pin dropped exactly on it — the
+    natural way to test a zone without walking — could not be grabbed again: pressing the pin hit the
+    dot, the dot reported a hit and dragged nothing. `HomeScreen.LocationDotMarker` overrides
+    `onLongPress` to return false, which lets the press fall through to the pin underneath; the tap
+    swallow (`setOnMarkerClickListener { _, _ -> true }`) is untouched. Verified on `emulator-5554`
+    with a pin sitting on the dot (pin box `513,1146-564,1217`, dot `523,1162-555,1194`): pressing
+    the pin's centre and dragging it away moved the mosque, closed visit 20 and unmuted every stream,
+    where the same press had done nothing before the fix.
 
 ---
 
