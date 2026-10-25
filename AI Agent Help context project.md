@@ -34,7 +34,7 @@ Snapshot at time of writing:
 - SDK: `minSdk 26`, `compileSdk 37`, `targetSdk 37`
 - Toolchain: AGP **9.4.1**, Gradle **9.6.0**, Kotlin (built-in via AGP) **2.2.10**, KSP **2.3.12**,
   Compose BOM **2026.09.00**
-- Status: debug + release builds green, 112 unit tests pass, `lintDebug` exits 0
+- Status: debug + release builds green, 131 unit tests pass, `lintDebug` exits 0
   (warnings only: version-currency + three pre-existing `ClickableViewAccessibility` in `HomeScreen`).
 - Branch **`fix/presence-routine-robustness`** (uncommitted, awaiting review):
   - Phase 1 — presence/routine rewrite: `PresenceEngine` + `RoutineCoordinator`/`RoutinePlanner`,
@@ -139,7 +139,7 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 | # | Screen | Package |
 |---|--------|---------|
 | 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold round + button bottom right, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one; radius slider only — new zones are auto-numbered "Mosque N", renamed in Settings; while the thumb is held the sheet fades to 5% with the slider at 50% so the circle can be watched) | `ui/home` |
-| 2 | History — stats card (total / week / streak / per-mosque), CSV export, day-grouped logs | `ui/history` |
+| 2 | History — Today/week totals, seven-day chart, Today / This week / All time filters, per-mosque counts and detail sheets, day-grouped timeline, all-history CSV export | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math; rolls at midnight) + next-prayer countdown (tomorrow's Fajr after Isha), prayer silence buffer | `ui/qibla` |
 | 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only) + rename dialog, place search, monitoring switches | `ui/settings` |
 
@@ -596,6 +596,29 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
       lands after ~3 fixes.
     - Untouched: the fence-`EXIT` re-check, pin moves, and the *Leaving zone · confirming…* pill,
       which now lasts at most a minute.
+33. **History is a day/week dashboard with per-mosque drilldown.**
+    - Gold Today and green This week totals, a seven-day activity chart, all-time total and day streak
+      precede Today / This week / All time filters. Each mosque card shows its selected-period count;
+      tapping opens its own day-grouped timeline. Mosque IDs keep identical names distinct.
+    - `HistoryViewModel` combines the existing repository stream with a 30-second local calendar tick
+      into one `HistoryState`, calculated on `Dispatchers.Default`. `computeVisitStats` is pure and
+      groups by mosque ID, never by name. There are no extra database queries or schema changes.
+    - Visits count once on their local entry date, including ongoing and overnight visits. Weeks start
+      Monday; current-week totals exclude dates after today, while All time retains every row. Streaks
+      run backwards from today or yesterday. Date/time-zone changes refresh a subscribed History screen.
+    - Mosque detail sheets and the main timeline share date grouping and rows. Rows show arrival/exit
+      times, duration or Ongoing, mosque ID and method; overnight exits include the exit date. Current
+      mosque names come from the existing DAO join. Names wrap, sheet titles scroll, and UI formatters
+      observe the Compose locale and the state's time zone. At large text sizes the chart becomes a
+      readable daily list; light/dark colors use existing theme tokens.
+    - Export still writes **all** visits through SAF, regardless of the active filter. UTF-8 CSV writing
+      runs on IO, keeps formula-safe cells and reports success/failure. Cancel leaves history unchanged.
+    - `HistoryStatsTest` adds 19 cases for local midnight, DST, Monday/year boundaries, duplicate names,
+      future dates, ongoing/overnight visits, streaks, ordering and period/mosque count consistency.
+    - Verified on the Android 37.2 emulator (2026-10-25): empty/populated states, 3 today / 12 this week /
+      15 all time, same-name mosque isolation, ongoing rows, live rename, light/dark mode, 200% text at
+      ~373 dp width and a long-name sheet in landscape. CSV from Today contained all 15 visits; cancel
+      preserved the filter. Original emulator data and display settings were restored; no phone install.
 
 ---
 
@@ -606,7 +629,7 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 .\gradlew.bat :app:assembleDebug        # debug APK  → app/build/outputs/apk/debug/app-debug.apk
 .\gradlew.bat :app:assembleRelease      # R8 + resource shrinking → app/build/outputs/apk/release/app-release.apk
-.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (112 tests)
+.\gradlew.bat :app:testDebugUnitTest    # JUnit 4 + kotlinx-coroutines-test (131 tests)
 .\gradlew.bat :app:lintDebug            # must exit 0
 ```
 
@@ -618,8 +641,8 @@ access gained, partial lift, one-shots, `ringTarget` fallback; §5.27), `WatchCa
 watch pace bands; §5.28), `GeofenceSelectionTest` (nearest-100 fence cap; §5.28), `ZonePresenceTest`
 (Home pill states), `DetectionSummaryTest` (Settings fence status), `NextPrayerTest` (tomorrow's Fajr
 after Isha; all §5.29), `CsvTest` (quoting + formula defusing; §5.30), `MosqueAutoNameTest`
-(auto-numbering of new zones; §5.31), `HaversineTest`,
-`GeoUtilsTest`, `PrayerQiblaTest`.
+(auto-numbering of new zones; §5.31), `HistoryStatsTest` (local-calendar counts, streaks and
+per-mosque filters; §5.33), `HaversineTest`, `GeoUtilsTest`, `PrayerQiblaTest`.
 
 Boundary behaviour on a device (emulator only — mock coordinates cannot be injected into a physical
 phone):
@@ -791,7 +814,9 @@ directories the emulator loads from:
 3. Arm a few routine actions in Settings (e.g. *Silent ringer* + *Mute media* + *Dim the screen*),
    then walk/teleport across the zone boundary; confirm each armed action lands on entry and the
    exit actions put the originals back. Confirm Settings stops showing *Restore now*.
-4. Confirm an `attendance_logs` row appears in History with the right method.
+4. Confirm History shows the right Today/week totals and method. Switch Today / This week / All time;
+   check per-mosque totals and open a mosque's visit sheet. Check ongoing/overnight rows, light/dark and
+   large text. Export from Today and confirm the CSV still contains all history; cancel must change nothing.
 5. Drag test (no walking): press and hold a saved pin and drag it onto your blue dot — the circle
    turns red, a visit row opens and the routine applies; drag it off again — green, visit closed,
    routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds,

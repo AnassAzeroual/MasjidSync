@@ -75,9 +75,17 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
   name, so this is where the real name is given.
 
 **History**
-- Stats: total visits, this week, day streak, and a count per mosque.
-- Attendance grouped by day with entry and exit times, duration, and the detection method used.
-- **CSV export** to a file you pick. Cells that a spreadsheet would run as a formula are defused.
+- Prominent **Today** and **This week** visit totals, a seven-day activity chart, all-time total,
+  and day streak in a green-and-gold dashboard that supports light and dark mode. Large text sizes
+  use a readable daily list instead of cramped chart labels.
+- **Today / This week / All time** filters show how many visits belong to each mosque. Tap a mosque
+  to open its own day-grouped visit timeline; mosque IDs distinguish places with identical names.
+- Visit cards show the mosque name, entry/exit times, duration and GPS/manual method; open visits
+  are marked **Ongoing**. Overnight exits include the exit date.
+- Counts use the local **entry date**, including open visits once. Weeks run Monday–Sunday, and
+  the calendar refreshes while History is open, so dates and totals follow midnight/timezone changes.
+- **Export** always saves **all visits**, regardless of the filter, to a CSV file you pick. Formula-like
+  cells are defused; a message confirms success or explains a write failure.
 
 **Qibla and prayer times**
 - An offline compass to Makkah showing the bearing and the distance. If the phone has no compass
@@ -109,7 +117,7 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 | # | Screen | Where | Purpose |
 |---|--------|-------|---------|
 | 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, a presence pill (*Outside Zone*, *Inside Zone* once the visit is logged, or *confirming…* / *GPS too weak to confirm* / *detection off* / *Leaving zone* while the app has not acted yet), one status banner at a time (missing location grant, detection off while inside, Do Not Disturb access needed, notifications), a gold round **+** button at the bottom right, and the zone picker with its editor sheet (20–100 m radius slider + Save & Activate; new zones are numbered, not named). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. Nothing on the map carries a name — pins, the details card and the drag read-out are nameless; the real name lives in Settings. The app bar switches the basemap between **Streets** and **Satellite**. |
-| 2 | **History** | `ui/history` | Stats card (total / this week / day streak / per-mosque), CSV export, attendance grouped by day with entry/exit times, duration and the detection method used. |
+| 2 | **History** | `ui/history` | Today/week totals, seven-day activity chart, all-time total and streak. Today / This week / All time filters, per-mosque counts with tap-to-open detail sheets, and a day-grouped visit timeline (times, duration, ongoing status, detection method). Export always includes all visits. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API, Moroccan method, when online; cached day or Muslim World League solar math offline; rolls over at midnight) with next-prayer countdown (tomorrow's Fajr after Isha), and the prayer silence buffer toggle. |
 | 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs — plus per-mosque tracking toggles + arrival mode (full silent / notify only) + rename, "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
 
@@ -332,7 +340,7 @@ paint may flicker red/grey while the routine holds, for at most that minute. A f
 still in flight when detection is switched off opens nothing.
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest   # 112 tests: ZoneBoundaryTest, PresenceRulesTest, RoutinePlannerTest, WatchCadenceTest, GeofenceSelectionTest, ZonePresenceTest, DetectionSummaryTest, NextPrayerTest, CsvTest, MosqueAutoNameTest, ...
+.\gradlew.bat :app:testDebugUnitTest   # 131 tests: ZoneBoundaryTest, PresenceRulesTest, RoutinePlannerTest, WatchCadenceTest, GeofenceSelectionTest, ZonePresenceTest, DetectionSummaryTest, NextPrayerTest, CsvTest, MosqueAutoNameTest, HistoryStatsTest, ...
 .\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor"                 # emulator: real positions vs the drawn circle
 .\tools\zone-boundary-sweep.ps1 -Mosque "Al-Noor" -WatchArrival   # ... and a real geofence-driven arrival
 ```
@@ -407,7 +415,7 @@ app/src/main/java/com/mosquetracker/app/
 ├── ui/
 │   ├── MainScreen.kt          # bottom navigation
 │   ├── home/                  # map, HomeViewModel, ZonePresence (pill state)
-│   ├── history/               # stats, day-grouped log, CSV export
+│   ├── history/               # day/week dashboard, mosque drilldown, visit timeline, CSV export
 │   ├── qibla/                 # compass, prayer times, next prayer, prayer silence
 │   ├── settings/              # routine editor, mosques, DetectionSummary (fence status line)
 │   ├── common/                # Permissions, SystemSettings deep links, banners, MosquePickRequest
