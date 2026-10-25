@@ -227,7 +227,6 @@ private fun HistoryContent(
                             selected = period == option,
                             onClick = { onPeriodChange(option) },
                             shape = SegmentedButtonDefaults.itemShape(index, HistoryPeriod.entries.size),
-                            icon = {},
                             modifier = Modifier.fillMaxHeight().heightIn(min = 48.dp),
                         ) {
                             Text(option.label, style = MaterialTheme.typography.labelLarge)
@@ -292,8 +291,8 @@ private fun SummaryTile(
 
 @Composable
 private fun WeeklyActivity(stats: VisitStats, today: LocalDate) {
-    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("This week, day by day", style = MaterialTheme.typography.titleMedium)
             if (LocalDensity.current.fontScale > 1.3f) {
                 stats.weekDays.forEach { day ->

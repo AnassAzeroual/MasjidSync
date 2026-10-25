@@ -2,8 +2,8 @@
 
 Offline-first Android app that detects when you arrive at a mosque, silences your phone on entry,
 restores it on exit, and logs your attendance. No account, no server. Detection, storage and
-attendance logging are entirely on-device; only map tiles (OpenStreetMap streets, Esri satellite),
-place-name search and the Aladhan prayer-time API touch the network (all free, no API keys), and
+attendance logging are entirely on-device; only map tiles (OpenStreetMap streets, Esri satellite)
+and the Aladhan prayer-time API touch the network (all free, no API keys), and
 everything keeps working without them.
 
 This repository is the **runnable MVP**. It builds, unit tests pass, and the debug and release
@@ -12,6 +12,17 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 ---
 
 ## Features
+
+**A consistent, modern interface**
+- Forest green, warm ivory and muted gold across Home, History, Qibla and Settings, with coordinated
+  dark surfaces, rounded cards, clear typography and branded navigation. System text scaling is respected.
+- A new vector **mosque + silent phone** mark appears in headers, the adaptive/themed launcher icon
+  and splash screen; a simplified monochrome version serves notifications and the Quick Settings tile.
+- Native controls retain labeled touch targets and selected checkmarks; sheets and alerts wrap or scroll
+  on smaller screens. In wide landscape, map panels sit beside the centre pin rather than over it.
+  No tracking settings, routine defaults or saved data change with the redesign.
+- Verified on an Android 37.2 emulator in light/dark, at 200% text and in landscape, including navigation,
+  map editing, History, prayer controls and routine sheets. Debug/release builds, 131 unit tests and lint pass.
 
 **Arrival and departure detection**
 - GPS only, in two steps: an Android geofence wakes the app, then the straight-line distance to the
@@ -67,12 +78,18 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
   inside, and dragging a zone onto or off yourself runs a real arrival or departure, so you can test
   without walking.
 
-**Adding mosques (Settings)**
-- *Search via Map* finds a place by name with the platform Geocoder; the camera flies there. It is
-  disabled offline.
-- *Use Current Location* drops the new mosque on your fix.
-- Each saved mosque has a **rename** button. The map numbers new zones instead of asking for a
-  name, so this is where the real name is given.
+**Settings & saved mosques**
+- A green-and-gold routine overview and compact **Sound & vibration**, **Do Not Disturb**,
+  **Screen & device**, **Arrival notification**, and **Restore & notify** cards. Tap a card for its
+  action sheet; changes save immediately, with clear permission and paused-state messages.
+- Saved mosque cards show the full name, radius, tracking switch, and **Full routine / Notify only**
+  arrival choices. Rename here; deleting asks for confirmation and explains that visits are removed too.
+- **Add Mosque Options** and **Monitoring** controls are removed from Settings. Add mosques on Home.
+  This is UI-only: background detection, geofences, workers, and saved monitoring/routine preferences
+  remain unchanged. The Quick Settings tile still controls detection; a previously paused routine can
+  be resumed explicitly. No preferences change just by opening Settings.
+- Light/dark themes, large-text wrapping, scrollable action sheets, and labeled touch targets match History.
+  Arrival choices include a checkmark; navigation labels stay on one line with ellipsis at very large text sizes.
 
 **History**
 - Prominent **Today** and **This week** visit totals, a seven-day activity chart, all-time total,
@@ -93,8 +110,11 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 - Prayer times: live from the Aladhan API (Moroccan method) when online. Offline, the app uses the
   cached day or calculates them on the phone (Muslim World League). They roll over at midnight and
   are recalculated after you move about 1 km.
-- A countdown to the next prayer; after Isha it shows tomorrow's Fajr.
-- **Prayer silence** applies the same sound profile as a mosque arrival for ±5, 15 or 30 minutes
+- A density-aware compass with upright cardinal labels and an accessible heading/bearing description.
+  A highlighted next-prayer card includes the time and countdown; after Isha it shows tomorrow's Fajr.
+  Today's timetable explicitly labels the next prayer instead of relying only on color.
+- **Prayer silence** has a full-row switch and wrapping, checkmarked ±5, 15 or 30 minute choices. It
+  applies the same sound profile as a mosque arrival
   around each prayer, even when you are not at a mosque. It runs from scheduled one-shot workers,
   so it fires with the app closed, and it restores the sound when the window ends.
 
@@ -119,18 +139,18 @@ builds are green. Device-only behaviours are marked with `TODO(device testing)`.
 | 1 | **Home** | `ui/home` | Mosque map with a blue **you-are-here** dot, a presence pill (*Outside Zone*, *Inside Zone* once the visit is logged, or *confirming…* / *GPS too weak to confirm* / *detection off* / *Leaving zone* while the app has not acted yet), one status banner at a time (missing location grant, detection off while inside, Do Not Disturb access needed, notifications), a gold round **+** button at the bottom right, and the zone picker with its editor sheet (20–100 m radius slider + Save & Activate; new zones are numbered, not named). Touch-and-hold drops a pin anywhere, and **press-and-hold a saved pin to drag that mosque elsewhere** — the zone turns **red** the moment it covers you. Nothing on the map carries a name — pins, the details card and the drag read-out are nameless; the real name lives in Settings. The app bar switches the basemap between **Streets** and **Satellite**. |
 | 2 | **History** | `ui/history` | Today/week totals, seven-day activity chart, all-time total and streak. Today / This week / All time filters, per-mosque counts with tap-to-open detail sheets, and a day-grouped visit timeline (times, duration, ongoing status, detection method). Export always includes all visits. |
 | 3 | **Qibla** | `ui/qibla` | Offline compass to Makkah, prayer times (live Aladhan API, Moroccan method, when online; cached day or Muslim World League solar math offline; rolls over at midnight) with next-prayer countdown (tomorrow's Fajr after Isha), and the prayer silence buffer toggle. |
-| 4 | **Settings** | `ui/settings` | **"My Routine" editor** — one switch per phone action for *If / Then / When it ends*, with the access each one needs — plus per-mosque tracking toggles + arrival mode (full silent / notify only) + rename, "Search via Map" (disabled offline) + "Use Current Location", monitoring and auto-silent switches, permission banners. |
+| 4 | **Settings** | `ui/settings` | Routine overview, grouped arrival/exit action sheets with selected counts and access hints; saved mosque cards with tracking, Full routine / Notify only, rename and confirmed deletion. No add-mosque or global monitoring controls; background services and saved preferences are unchanged. |
 
 Bottom navigation (`ui/MainScreen.kt`) switches between the four tabs. The map's app bar has
 *map style*, *show all mosques* and *centre on my location* actions; the camera follows your fix
-until you pan, then it is yours. Settings hands new mosques to Home through a one-shot
-`MosquePickRequest`: map-centre pick, current-fix pick, or a searched place the camera flies to.
+until you pan, then it is yours. Add mosques directly on Home with its + button or map long-press.
 A Quick Settings tile (`service/MonitoringTileService.kt`) toggles background detection without
 opening the app.
 
 ### Map styles
 
-The app bar's layers button switches the basemap, and the choice is remembered. Both layers are
+Each tap on the app bar's layers button switches directly between Streets and Satellite, without
+opening a menu. The choice is remembered, including when drawing a new zone. Both layers are
 keyless, so nothing here is billed and nothing needs an account:
 
 | Layer | Tiles | Credit (tiny, bottom-left corner) |
@@ -189,10 +209,10 @@ position stay draggable.
 
 ## The routine
 
-The Settings card is the app's *If / Then / When it ends*. **If** is the list of tracked mosques,
-**Then** and **When it ends** are one switch per phone action, chosen from the full catalogue in
-`model/RoutineAction.kt`. The master switch is *Run the routine on arrival*; each mosque's own
-arrival mode can still opt out entirely (*notify only*).
+Settings separates **On arrival**, **When you leave**, and **Your mosques**. Compact category cards
+open sheets with one switch per phone action from `model/RoutineAction.kt`. The existing `auto_silent`
+preference still gates routine execution, but its old master switch is not shown; a previously paused
+routine offers **Resume routine**. Each mosque can opt out of the routine with **Notify only**.
 
 | Group | On arrival | Needs |
 |-------|-----------|-------|
@@ -230,9 +250,9 @@ left alone. Grant DND access for a fully silent ringer (`RoutineEngine.ringTarge
 > action is armed — the ring mode already mutes those streams — re-asserts the ring mode last, and
 > the Settings row says "already handled by the ring mode".
 
-The card also guards the easiest mistake in the whole app: muting every stream while leaving the
+Settings also guards the easiest mistake in the whole app: muting every stream while leaving the
 ringer alone, which produces a phone that still rings inside the mosque. When no ringer action is
-armed but sound actions are, it says *"No ringer action is armed, so calls can still ring"* with a
+selected but sound actions are, it says *"Calls can still ring: no ringer action is selected."* with a
 **Set silent** button.
 
 ---
@@ -288,8 +308,8 @@ Background machinery is coordinated by `monitoring/MonitoringController.kt`:
   added, at most **100** (the Play Services per-app limit; past that the nearest to the last fix
   win), and each registration reports a status: active, no mosques, no precise location, no
   *Allow all the time* (Android 10+ refuses geofences without it), or failed. Settings shows that
-  status under *Background detection* (in red when zones are not armed), and opening the app or
-  returning from a permission screen re-arms them.
+  status in its read-only routine overview, and opening the app or returning from a permission
+  screen re-arms them.
 - **15-minute `GeofenceRefreshWorker`** (`work/MonitoringScheduler.kt`) — re-registers the fences so
   they survive OS cleanup and revives the service if the system stopped it. With detection off it
   cancels itself.
@@ -515,7 +535,7 @@ Requested at runtime via `ui/common/Permissions.kt` and declared in `AndroidMani
 | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | GPS fix, geofences, distance check — the app's only sensor |
 | `ACCESS_BACKGROUND_LOCATION` | Detection while the app is closed |
 | `POST_NOTIFICATIONS` | Entry/exit + foreground-service notifications |
-| `INTERNET`, `ACCESS_NETWORK_STATE` | Map tiles (OpenStreetMap, Esri satellite), place-name search and Aladhan prayer times (detection itself stays offline) |
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Map tiles (OpenStreetMap, Esri satellite) and Aladhan prayer times (detection itself stays offline) |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` | Persistent detection service |
 | `RECEIVE_BOOT_COMPLETED` | Restart monitoring after reboot |
 | `ACCESS_NOTIFICATION_POLICY` | The routine's ring-mode and Do Not Disturb actions |
@@ -538,8 +558,6 @@ sensors.
 These need a real device to validate:
 
 - Geofence `ENTER`/`EXIT` timing and GPS accuracy inside dense urban areas.
-- Place search depends on the platform `Geocoder` backend, which varies by device/region; when it
-  is absent the field explains so and map-pick still works.
 - Auto-silent behaviour with Do Not Disturb (some OEMs restrict third-party ringer control), and
   whether a given OEM lets the routine's individual actions land.
 - Behaviour under battery optimisation / OEM process killers — the app may need to be exempted.
@@ -570,9 +588,9 @@ Entry and exit notices share one notification slot per mosque, so leaving replac
    `org.jetbrains.kotlin.android` is an error — it is intentionally absent.
 4. **AOSP has no first-party geofencing API**, so the geofence step uses Play Services' `GeofencingClient`
    (the platform-recommended geofence API).
-5. **Below API 33 the callback `Geocoder` API does not exist**, so place search uses the blocking
-   `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there (API 33+ uses
-   the listener version).
+5. **Below API 33 the callback `Geocoder` API does not exist**, so the retained `PlaceSearch` utility
+   uses blocking `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there
+   (API 33+ uses the listener version). Its search path is no longer exposed by Settings.
 6. **The editor sheet has no mini-map**: the green circle drawn on the main map behind the sheet
    *is* the live radius preview (and the exact geofence that gets armed).
 7. **Prayer times come from the Aladhan API when online** (method 21, the Moroccan convention that

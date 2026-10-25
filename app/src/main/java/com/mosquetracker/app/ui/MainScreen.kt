@@ -4,21 +4,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.mosquetracker.app.ui.common.AppIcons
-import com.mosquetracker.app.ui.common.EmptyState
-import com.mosquetracker.app.ui.common.KeyValueRow
-import com.mosquetracker.app.ui.common.ScreenScaffold
-import com.mosquetracker.app.ui.common.SectionCard
 import com.mosquetracker.app.ui.history.HistoryScreen
 import com.mosquetracker.app.ui.home.HomeScreen
 import com.mosquetracker.app.ui.qibla.QiblaScreen
@@ -51,13 +51,20 @@ fun MainScreen() {
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 Destination.entries.forEach { destination ->
                     NavigationBarItem(
                         selected = currentRoute == destination.route,
                         onClick = { navigate(destination.route) },
                         icon = { DestinationIcon(destination) },
-                        label = { Text(destination.label) },
+                        label = { Text(destination.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
             }
@@ -71,9 +78,7 @@ fun MainScreen() {
             composable(Destination.HOME.route) { HomeScreen() }
             composable(Destination.HISTORY.route) { HistoryScreen() }
             composable(Destination.QIBLA.route) { QiblaScreen() }
-            composable(Destination.SETTINGS.route) {
-                SettingsScreen(onOpenHome = { navigate(Destination.HOME.route) })
-            }
+            composable(Destination.SETTINGS.route) { SettingsScreen() }
         }
     }
 }

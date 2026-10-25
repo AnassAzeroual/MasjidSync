@@ -3,30 +3,28 @@ package com.mosquetracker.app.ui.home
 import android.graphics.Point
 import android.view.MotionEvent
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -50,7 +48,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -628,10 +631,6 @@ fun HomeScreen(
         )
     }
 
-    // Map style menu. It is offered while picking too: a bare patch of imagery is often the
-    // clearest backdrop for drawing a zone.
-    var layersMenuOpen by remember { mutableStateOf(false) }
-
     ScreenScaffold(
         title = if (picking) "New mosque zone" else "MasjidSync",
         modifier = modifier,
@@ -648,29 +647,15 @@ fun HomeScreen(
             null
         },
         actions = {
-            Box {
-                IconButton(onClick = { layersMenuOpen = true }) {
-                    Icon(AppIcons.Layers, contentDescription = "Map style: ${mapLayer.label}")
-                }
-                DropdownMenu(
-                    expanded = layersMenuOpen,
-                    onDismissRequest = { layersMenuOpen = false },
-                ) {
-                    MapLayer.entries.forEach { layer ->
-                        DropdownMenuItem(
-                            text = { Text(layer.label) },
-                            onClick = {
-                                layersMenuOpen = false
-                                viewModel.setMapLayer(layer)
-                            },
-                            leadingIcon = if (layer == mapLayer) {
-                                { Icon(AppIcons.Check, contentDescription = null) }
-                            } else {
-                                null
-                            },
-                        )
-                    }
-                }
+            val nextMapLayer = when (mapLayer) {
+                MapLayer.STREETS -> MapLayer.SATELLITE
+                MapLayer.SATELLITE -> MapLayer.STREETS
+            }
+            IconButton(
+                onClick = { viewModel.setMapLayer(nextMapLayer) },
+                modifier = Modifier.semantics { stateDescription = mapLayer.label },
+            ) {
+                Icon(AppIcons.Layers, contentDescription = "Switch to ${nextMapLayer.label} map")
             }
             if (!picking && mosques.isNotEmpty()) {
                 IconButton(
@@ -708,114 +693,134 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // Inside/Outside pill, floating over the top of the map. It gives way to the live
-            // read-out while a pin is being dragged, so the two can never disagree mid-gesture.
-            if (draggedMosque != null && draggedDistance != null) {
-                DragReadout(
-                    distanceMeters = draggedDistance,
-                    radiusMeters = DetectionPipeline.zoneRadiusMeters(draggedMosque.geofenceRadius).toInt(),
-                    inside = draggedInside,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 12.dp),
-                )
-            } else if (!picking) {
-                ZonePill(
-                    presence = presence,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 12.dp),
-                )
-            }
-
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // One banner at most, so the map stays visible: location grants first (nothing
-                // works without them), then what stops the routine, then notifications.
-                val locationMissing = permissions.missing.filter { it != MissingPermission.NOTIFICATIONS }
-                when {
-                    locationMissing.isNotEmpty() -> PermissionBanners(
-                        status = permissions,
-                        shown = locationMissing.take(1),
-                    )
+                BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    val wideLayout = maxWidth >= 600.dp && maxWidth > maxHeight
+                    val panelWidth = if (wideLayout) (maxWidth * 0.4f).coerceAtMost(360.dp) else 560.dp
+                    val statusModifier = Modifier
+                        .align(if (wideLayout) Alignment.TopStart else Alignment.TopCenter)
+                        .widthIn(max = panelWidth)
+                        .heightIn(max = if (wideLayout) maxHeight else maxHeight * 0.3f)
+                        .verticalScroll(rememberScrollState())
 
-                    presence == ZonePresence.DETECTION_OFF && nearestMosque != null -> AlertBanner(
-                        title = "Detection is off",
-                        message = "You are inside ${nearestMosque.name}, but background detection " +
-                            "is switched off, so the routine will not run.",
-                        actionText = "Turn on",
-                        onAction = viewModel::enableMonitoring,
-                    )
-
-                    dndMissing -> AlertBanner(
-                        title = "Do Not Disturb access needed",
-                        message = "Without it the routine can only set the phone to vibrate, " +
-                            "not silent, and skips its Do Not Disturb actions.",
-                        actionText = "Grant",
-                        onAction = { context.openNotificationPolicySettings() },
-                    )
-
-                    MissingPermission.NOTIFICATIONS in permissions.missing -> PermissionBanners(
-                        status = permissions,
-                        shown = listOf(MissingPermission.NOTIFICATIONS),
-                    )
-                }
-
-                if (picking && editingMarker) {
-                    MosqueEditorSheet(
-                        radiusMeters = pickRadius,
-                        onRadiusChange = { pickRadius = it },
-                        dragging = draggingRadius,
-                        onDraggingChange = { draggingRadius = it },
-                        saving = saving,
-                        canSave = canSave,
-                        onSave = { savePickedMosque() },
-                    )
-                } else if (picking && !editingMarker) {
-                    HintCard(
-                        title = "Position the mosque",
-                        message = "Touch and hold the pin, then drag it — or tap the map — to move the zone. Tap the pin to size the circle. Tip: touch and hold any empty spot to drop a new pin there. You can rename it later in Settings.",
-                        liveText = distanceToCentre?.let { distance ->
-                            "%s — %d m from the centre".format(
-                                if (insideZone) "You are inside this zone" else "You are outside this zone",
-                                distance.toInt(),
-                            )
-                        },
-                        liveInside = insideZone,
-                    )
-                } else {
-                    message?.let { text -> MessageCard(text) }
-
-                    val selected: MosqueEntity? = mosques.firstOrNull { it.id == selectedMosqueId }
-                    if (selected != null) {
-                        MosqueDetailsCard(
-                            mosque = selected,
-                            distanceMeters = fix?.let {
-                                Haversine.distanceMeters(
-                                    it.latitude,
-                                    it.longitude,
-                                    selected.latitude,
-                                    selected.longitude,
-                                )
-                            },
-                            onClose = { selectedMosqueId = null },
-                            onDelete = {
-                                viewModel.delete(selected)
-                                selectedMosqueId = null
-                            },
+                    // Inside/Outside pill, floating over the top of the map. It gives way to the live
+                    // read-out while a pin is being dragged, so the two can never disagree mid-gesture.
+                    if (draggedMosque != null && draggedDistance != null) {
+                        DragReadout(
+                            distanceMeters = draggedDistance,
+                            radiusMeters = DetectionPipeline.zoneRadiusMeters(draggedMosque.geofenceRadius).toInt(),
+                            inside = draggedInside,
+                            modifier = statusModifier,
                         )
+                    } else if (!picking) {
+                        ZonePill(presence = presence, modifier = statusModifier)
                     }
 
-                    AddMosqueButton(
-                        enabled = fix != null,
-                        onClick = { beginPicking(PickRequest.CurrentFix) },
-                        modifier = Modifier.align(Alignment.End),
-                    )
+                    Column(
+                        modifier = Modifier
+                            .align(if (wideLayout) Alignment.BottomEnd else Alignment.BottomCenter)
+                            .widthIn(max = panelWidth)
+                            .fillMaxWidth()
+                            .heightIn(max = if (wideLayout) maxHeight else maxHeight * 0.65f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            // One banner at most, so the map stays visible: location grants first (nothing
+                            // works without them), then what stops the routine, then notifications.
+                            val locationMissing = permissions.missing.filter { it != MissingPermission.NOTIFICATIONS }
+                            when {
+                                locationMissing.isNotEmpty() -> PermissionBanners(
+                                    status = permissions,
+                                    shown = locationMissing.take(1),
+                                )
+
+                                presence == ZonePresence.DETECTION_OFF && nearestMosque != null -> AlertBanner(
+                                    title = "Detection is off",
+                                    message = "You are inside a saved zone, but background detection " +
+                                        "is switched off, so the routine will not run.",
+                                    actionText = "Turn on",
+                                    onAction = viewModel::enableMonitoring,
+                                )
+
+                                dndMissing -> AlertBanner(
+                                    title = "Do Not Disturb access needed",
+                                    message = "Without it the routine can only set the phone to vibrate, " +
+                                        "not silent, and skips its Do Not Disturb actions.",
+                                    actionText = "Grant",
+                                    onAction = { context.openNotificationPolicySettings() },
+                                )
+
+                                MissingPermission.NOTIFICATIONS in permissions.missing -> PermissionBanners(
+                                    status = permissions,
+                                    shown = listOf(MissingPermission.NOTIFICATIONS),
+                                )
+                            }
+
+                            if (picking && editingMarker) {
+                                MosqueEditorSheet(
+                                    radiusMeters = pickRadius,
+                                    onRadiusChange = { pickRadius = it },
+                                    dragging = draggingRadius,
+                                    onDraggingChange = { draggingRadius = it },
+                                    saving = saving,
+                                    canSave = canSave,
+                                    onSave = { savePickedMosque() },
+                                )
+                            } else if (picking && !editingMarker) {
+                                HintCard(
+                                    title = "Position your zone",
+                                    message = "Hold and drag the pin, or tap the map, to move it. Tap the pin to adjust the radius.\n\nHold an empty spot to drop a new pin. Rename it later in Settings.",
+                                    liveText = distanceToCentre?.let { distance ->
+                                        "%s · %d m from centre".format(
+                                            if (insideZone) "Inside this zone" else "Outside this zone",
+                                            distance.toInt(),
+                                        )
+                                    },
+                                    liveInside = insideZone,
+                                )
+                            } else {
+                                message?.let { text -> MessageCard(text) }
+
+                                val selected: MosqueEntity? = mosques.firstOrNull { it.id == selectedMosqueId }
+                                if (selected != null) {
+                                    MosqueDetailsCard(
+                                        mosque = selected,
+                                        distanceMeters = fix?.let {
+                                            Haversine.distanceMeters(
+                                                it.latitude,
+                                                it.longitude,
+                                                selected.latitude,
+                                                selected.longitude,
+                                            )
+                                        },
+                                        onClose = { selectedMosqueId = null },
+                                        onDelete = {
+                                            viewModel.delete(selected)
+                                            selectedMosqueId = null
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
+                        if (!picking) {
+                            AddMosqueButton(
+                                enabled = fix != null,
+                                onClick = { beginPicking(PickRequest.CurrentFix) },
+                                modifier = Modifier.align(Alignment.End),
+                            )
+                        }
+                    }
                 }
 
                 // Credit for the basemap in use. OpenStreetMap and Esri both hand out their tiles
@@ -845,31 +850,32 @@ private fun ZonePill(presence: ZonePresence, modifier: Modifier = Modifier) {
         ZonePresence.LEAVING ->
             MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
 
-        ZonePresence.NO_FIX,
-        ZonePresence.OUTSIDE,
-        -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+        ZonePresence.NO_FIX ->
+            MaterialTheme.colorScheme.surfaceContainer to MaterialTheme.colorScheme.onSurface
+
+        ZonePresence.OUTSIDE ->
+            MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
     }
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        shape = RoundedCornerShape(24.dp),
         color = container,
-        shadowElevation = 4.dp,
+        contentColor = content,
+        shadowElevation = 2.dp,
     ) {
         Text(
             text = when (presence) {
                 ZonePresence.NO_FIX -> "Waiting for GPS…"
-                ZonePresence.OUTSIDE -> "Outside Zone"
-                ZonePresence.INSIDE -> "Inside Zone"
-                ZonePresence.CONFIRMING -> "Inside Zone · confirming…"
-                ZonePresence.WEAK_FIX -> "Inside Zone · GPS too weak to confirm"
-                ZonePresence.DETECTION_OFF -> "Inside Zone · detection off"
+                ZonePresence.OUTSIDE -> "Outside zone"
+                ZonePresence.INSIDE -> "Inside zone"
+                ZonePresence.CONFIRMING -> "Inside zone · confirming…"
+                ZonePresence.WEAK_FIX -> "Inside zone · GPS too weak to confirm"
+                ZonePresence.DETECTION_OFF -> "Inside zone · detection off"
                 ZonePresence.LEAVING -> "Leaving zone · confirming…"
             },
-            style = MaterialTheme.typography.titleMedium,
-            color = content,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.titleSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
         )
     }
 }
@@ -888,13 +894,13 @@ private fun DragReadout(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(50),
+        shape = RoundedCornerShape(24.dp),
         color = if (inside) {
             MaterialTheme.colorScheme.error
         } else {
-            MaterialTheme.colorScheme.surfaceVariant
+            MaterialTheme.colorScheme.surfaceContainer
         },
-        shadowElevation = 4.dp,
+        shadowElevation = 2.dp,
     ) {
         Text(
             text = "%.0f m · %s the %d m zone".format(
@@ -902,15 +908,14 @@ private fun DragReadout(
                 if (inside) "inside" else "outside",
                 radiusMeters,
             ),
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.titleSmall,
             color = if (inside) {
                 MaterialTheme.colorScheme.onError
             } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
+                MaterialTheme.colorScheme.onSurface
             },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
         )
     }
 }
@@ -918,48 +923,38 @@ private fun DragReadout(
 /** Gold round button, bottom right: save wherever the user is standing right now. */
 @Composable
 private fun AddMosqueButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    IconButton(
+    FilledIconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier
-            .size(56.dp)
-            .background(
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.secondary
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                shape = CircleShape,
-            ),
+        modifier = modifier.size(56.dp),
+        shape = CircleShape,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.tertiary,
+            contentColor = MaterialTheme.colorScheme.onTertiary,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
     ) {
         Icon(
             AppIcons.Add,
             contentDescription = "Save current position as mosque",
-            tint = if (enabled) {
-                Color(0xFF3F2E00)
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            modifier = Modifier.size(28.dp),
         )
     }
 }
 
-/**
- * Tiny attribution in the map's bottom-left corner naming whoever supplied the tiles on screen.
- * OpenStreetMap and Esri both require it to stay visible, so it is kept — but as a corner label
- * rather than a pill, the way other map apps do it. The faint light shadow keeps it legible on
- * dark satellite imagery without a background box.
- */
 @Composable
 private fun MapCredit(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall.copy(
-            shadow = Shadow(color = Color.White.copy(alpha = 0.7f), offset = Offset(1f, 1f)),
+            shadow = Shadow(
+                color = Color.White.copy(alpha = 0.9f),
+                offset = Offset(1f, 1f),
+                blurRadius = 3f,
+            ),
         ),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        color = Color(0xFF1A2821),
         modifier = modifier,
     )
 }
@@ -1006,32 +1001,35 @@ private fun MosqueEditorSheet(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = cardAlpha),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = cardAlpha),
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ),
     ) {
         Column(
-            modifier = Modifier
-                .heightIn(max = 420.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .alpha(cardAlpha)
-                    .width(36.dp)
-                    .height(4.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        shape = RoundedCornerShape(2.dp),
-                    ),
-            )
-
             Column(modifier = Modifier.alpha(sliderAlpha)) {
-                Text("Zone radius", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Zone radius",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "$radiusMeters m",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.End,
+                    )
+                }
                 Slider(
                     value = radiusMeters.toFloat(),
                     // Truncating would turn a thumb resting at 59.99 into 59: snap to the 10 m step.
@@ -1042,29 +1040,27 @@ private fun MosqueEditorSheet(
                     onValueChangeFinished = { onDraggingChange(false) },
                     valueRange = MinRadiusMeters.toFloat()..MaxRadiusMeters.toFloat(),
                     steps = (MaxRadiusMeters - MinRadiusMeters) / RadiusStepMeters - 1,
+                    modifier = Modifier.semantics { contentDescription = "Zone radius in metres" },
                 )
-                Row(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(
-                        text = "${MinRadiusMeters}m",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "$MinRadiusMeters m",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "${radiusMeters}m",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = "${MaxRadiusMeters}m",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "$MaxRadiusMeters m",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
             Text(
-                text = "The circle on the map updates live as you drag — red while you are standing inside it. Hold the slider and this card fades so you can watch the circle. You can rename the mosque later in Settings.",
+                text = "The circle updates as you drag. Red means you are inside. Hold the slider to fade this card and see the map. Rename the mosque later in Settings.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.alpha(cardAlpha),
@@ -1073,11 +1069,16 @@ private fun MosqueEditorSheet(
             Button(
                 onClick = onSave,
                 enabled = canSave,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .alpha(cardAlpha),
             ) {
-                Text(if (saving) "Saving…" else "Save & Activate")
+                Text(
+                    text = if (saving) "Saving…" else "Save & Activate",
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
@@ -1093,47 +1094,32 @@ private fun MosqueDetailsCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = buildString {
-                            append("%.5f".format(mosque.latitude))
-                            append(", ")
-                            append("%.5f".format(mosque.longitude))
-                            append("  ·  ")
-                            append(DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius).toInt())
-                            append(" m")
-                            if (distanceMeters != null) {
-                                append("  ·  ")
-                                append("%.0f".format(distanceMeters))
-                                append(" m away")
-                            }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (!mosque.trackingEnabled) {
-                        Text(
-                            text = "Tracking paused — switch it back on in Settings.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                    } else {
-                        Text(
-                            text = "Press and hold the pin, then drag to move this mosque.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Saved zone",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
                 IconButton(onClick = onDelete) {
-                    Icon(AppIcons.Delete, contentDescription = "Delete ${mosque.name}")
+                    Icon(
+                        AppIcons.Delete,
+                        contentDescription = "Delete ${mosque.name}",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                 }
                 if (onClose != null) {
                     IconButton(onClick = onClose) {
@@ -1141,6 +1127,42 @@ private fun MosqueDetailsCard(
                     }
                 }
             }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "${DetectionPipeline.zoneRadiusMeters(mosque.geofenceRadius).toInt()} m radius",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    if (distanceMeters != null) {
+                        Text(
+                            text = "%.0f m away".format(distanceMeters),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "%.5f, %.5f".format(mosque.latitude, mosque.longitude),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = if (!mosque.trackingEnabled) {
+                    "Tracking paused — switch it back on in Settings."
+                } else {
+                    "Hold and drag the pin to move this mosque."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -1148,12 +1170,20 @@ private fun MosqueDetailsCard(
 @Composable
 private fun MessageCard(text: String) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ),
     ) {
-        Text(text, modifier = Modifier.padding(12.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(16.dp),
+        )
     }
 }
 
@@ -1161,25 +1191,38 @@ private fun MessageCard(text: String) {
 private fun HintCard(title: String, message: String, liveText: String? = null, liveInside: Boolean = false) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleLarge)
             if (liveText != null) {
-                Text(
-                    text = liveText,
-                    style = MaterialTheme.typography.titleSmall,
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
                     color = if (liveInside) {
-                        MaterialTheme.colorScheme.error
+                        MaterialTheme.colorScheme.errorContainer
                     } else {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.primaryContainer
                     },
-                )
+                    contentColor = if (liveInside) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    },
+                ) {
+                    Text(
+                        text = liveText,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
             }
             Text(
                 text = message,

@@ -3,8 +3,8 @@
 **Project:** **MasjidSync** (display name; code namespace stays `com.mosquetracker.app`) — an
 **offline-first Android app** that detects when you arrive at a mosque, silences the phone on
 entry, restores it on exit, and logs your attendance. No account, no server. Detection, storage
-and attendance logging are entirely on-device; only map tiles and place-name search touch the
-network.
+and attendance logging are entirely on-device; only map tiles and the Aladhan prayer-time API touch
+the network. Mosque creation is on Home, not Settings.
 
 Read this file end-to-end before touching the code. It covers architecture, the detection pipeline,
 engineering decisions and quirks, versioning, signing, build/verify commands, and the git workflow.
@@ -60,8 +60,8 @@ Snapshot at time of writing:
     Qibla footer names both sources, next prayer marked.
 - Routine: **editable** (one switch per action, catalogue in `model/RoutineAction.kt`); a full
   armed entry→exit cycle is verified on-device, see §8.
-- UI: **MasjidSync** template rebuild verified on-device (Home map + Inside pill + status card,
-  Settings toggles + search + routine editor, editor sheet, full save flow) — see §8.
+- UI: **MasjidSync** Home map, History dashboard (§5.33), grouped Settings editor (§5.34),
+  and mosque editor with a live radius preview. Earlier device verification is recorded in §8.
 - Emulator: **working** (after the Media Foundation workaround, §8) — app installs and launches on
   `Medium_Phone`; core flows verified via `uiautomator` + screenshots, see §8.
 - Map styles: **switchable** from the Home app bar — *Streets* (OpenStreetMap) and *Satellite*
@@ -141,9 +141,9 @@ MainActivity → MainScreen (bottom nav: Home / History / Settings)
 | 1 | Home — map (opens on the last cached fix, follows the live fix until you pan; my-location resumes), blue you-are-here dot + accuracy halo at the live fix, basemap switcher in the app bar (Streets / Satellite), presence pill (§5.29), one status banner at a time, gold round + button bottom right, zone picker + editor sheet (tap pin, or touch-and-hold the map to drop one; radius slider only — new zones are auto-numbered "Mosque N", renamed in Settings; while the thumb is held the sheet fades to 5% with the slider at 50% so the circle can be watched) | `ui/home` |
 | 2 | History — Today/week totals, seven-day chart, Today / This week / All time filters, per-mosque counts and detail sheets, day-grouped timeline, all-history CSV export | `ui/history` |
 | 3 | Qibla — offline compass, prayer times (live Aladhan API when online, cached day, else solar math; rolls at midnight) + next-prayer countdown (tomorrow's Fajr after Isha), prayer silence buffer | `ui/qibla` |
-| 4 | Settings — "My Routine" (editable If/Then/When-it-ends: pick the on-arrival and on-exit actions), per-mosque tracking toggles + arrival mode (full silent / notify only) + rename dialog, place search, monitoring switches | `ui/settings` |
+| 4 | Settings — read-only routine overview, grouped arrival/exit action sheets, permission/recovery hints, saved mosque cards with tracking, Full routine / Notify only, rename and confirmed deletion; no add-mosque or global monitoring controls (§5.34) | `ui/settings` |
 
-Shared: `ui/common` (`ScreenScaffold` green header, `MosquePickRequest` hand-off, `AppIcons`,
+Shared: `ui/common` (`ScreenScaffold` surface-colored branded header, `MosquePickRequest` hand-off, `AppIcons`,
 `Permissions` (`PermissionStatus` + `PermissionBanners`), `SystemSettings` (settings-page intents),
 `SectionCard`/`KeyValueRow`/`EmptyState`/`AlertBanner`). The old `ui/dashboard` (list) and
 `ui/mosques` packages were removed in the MasjidSync rebuild.
@@ -186,13 +186,14 @@ waits for a departure to *hold* — 20 s once the fix is clearly outside (25 m, 
 if larger), a full minute when it is only outside the drawn circle. Full
 reasoning in §5.25, §5.27 and §5.28.
 
-### The routine (editable If / Then / When-it-ends)
+### The routine (grouped arrival and departure actions)
 
-The Settings card is the single place that decides what the phone does on arrival. `If` is the
-tracked-mosque list; `Then` and `When it ends` are one switch per action, stored in DataStore under
-`routine_actions` and catalogued in `model/RoutineAction.kt`. "Run the routine on arrival" (the
-`auto_silent` key) is the master switch, and the prayer-silence feature reuses the routine's
-sound subset (`RoutineAction.SOUND_PROFILE`).
+Settings groups the `model/RoutineAction.kt` catalogue into action sheets, with one switch per action
+stored under `routine_actions`. The read-only overview summarizes tracked mosques and selected arrival
+actions; saved mosque cards own individual tracking and arrival mode. The `auto_silent` preference is
+still the routine gate, but its old switch and the global monitoring controls are no longer shown.
+Existing values are preserved; a false `auto_silent` value exposes an explicit Resume routine action.
+The prayer-silence feature reuses the routine's sound subset (`RoutineAction.SOUND_PROFILE`).
 
 | Group | On arrival | Needs |
 |---|---|---|
@@ -268,13 +269,15 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
      swallows the type below 29, so it is safe on minSdk 26.
 9. **Adaptive launcher icons live in `res/mipmap-anydpi/`** (not `-anydpi-v26`) because minSdk is 26
     and lint flags the redundant `-v26` qualifier. They reference `@drawable/ic_launcher_background`
-    (which hardcodes `#0F766E`), so `@color/ic_launcher_background` was removed as unused.
+    (forest `#155E4B`). The foreground is a mosque inside a phone with a mute symbol, also used for
+    Android's monochrome icon layer. `ic_brand_mark` provides the compact in-app version; `ic_stat_mosque`
+    is simplified for notifications and the Quick Settings tile. Launch backgrounds have light/dark resources.
 10. Lint warnings that remain: the two informational version-currency notices
     (`AndroidGradlePluginVersion`, `NewerVersionAvailable`) — leave them unless deliberately
     upgrading — and three `ClickableViewAccessibility` on the map's pin-drag touch listener in
     `HomeScreen`.
-11. **Bottom content floats over the map; there are no FABs.** Settings keeps its full-width gold
-    button; Home's add action is a round gold **+** button at the bottom right (`AddMosqueButton`,
+11. **Bottom content floats over the map; there are no FABs.** Mosque creation is on Home only.
+    Home's add action is a round gold **+** button at the bottom right (`AddMosqueButton`,
     a circular `IconButton`, grey while there is no fix). The map itself is nameless: markers carry
     no title/snippet, the details card and the drag read-out show coordinates, radius and distance
     only — the real name lives in Settings (§5.31). The editor sheet is deliberately non-modal: a
@@ -313,8 +316,8 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     Verified identical to the API on-device.
 18. **The routine is data, not code.** `model/RoutineAction.kt` is the single catalogue (label,
     description, `ActionPhase`, `ActionGroup`, `ActionRequirement`, `defaultEnabled`). Adding an
-    action is one enum entry plus one application site in `RoutineEngine`; the Settings editor, the
-    "N of 14 armed" counter, the access hints and the blocked list all derive from the catalogue.
+    action is one enum entry plus one application site in `RoutineEngine`; the Settings action sheets,
+    selected counts and access hints all derive from the catalogue. Unsupported actions are not listed.
     Fresh-install defaults are in `RoutineAction.DEFAULT_ENABLED`, never in `SettingsStore`.
 19. **The routine snapshot is captured once, restored per-part, and completed later.** `RoutineEngine.apply`
     reuses an existing `routine_snapshot` so a repeated ENTER cannot overwrite the true pre-arrival
@@ -343,8 +346,11 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     which is where that imagery ends, and osmdroid clamps the map to the source's range. Both
     layers' licences require the credit to stay visible, so `MapCredit` draws it on the map as a
     tiny bottom-left label (faint light shadow for dark imagery, no background pill), never in
-    Settings. Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins,
-    zone polygons and the picker are overlays, and each source caches under its own name.
+    Settings. The Home layers button directly toggles Streets/Satellite on each tap, including while
+    picking, with no selection menu. Its accessible label names the next layer and its state describes
+    the current layer. The choice still persists through `HomeViewModel.setMapLayer` / DataStore.
+    Switching only swaps tiles (`setTileSource` in `rememberMosqueMapView`): pins, zone polygons and
+    the picker are overlays, and each source caches under its own name.
 22. **The you-are-here dot is added to the overlay list unconditionally and toggled with
     `isEnabled`.** The list is cleared and rebuilt by the `LaunchedEffect(mosques, picking)` effect,
     so a dot that was added/removed on fix changes would race that rebuild (get dropped, or be
@@ -517,9 +523,9 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
     - **Grants made in system settings re-arm the fences.** `MonitoringController.recheck()` (called
       from `MainActivity.onStart` and after any permission result) runs `ensureRunning` and
       re-registers the fences when the last `FenceStatus` was a permission refusal or `FAILED`.
-    - **Settings** "Background detection" subtitle comes from `ui/settings/DetectionSummary.kt`
-      (pure, `DetectionSummaryTest`): off / nothing tracked / starting / watching N / nearest 100 of N /
-      arming / not armed for lack of precise or "all the time" location / refused — problems in red.
+    - **Settings** uses `ui/settings/DetectionSummary.kt` (pure, `DetectionSummaryTest`) in its
+      read-only overview: off / nothing tracked / starting / watching N / nearest 100 of N / arming /
+      not armed for lack of precise or "all the time" location / refused. The old switch is removed (§5.34).
     - **Home pill** (`ui/home/ZonePresence.kt`, pure, `ZonePresenceTest`) combines the circle test with
       the open visits (`AttendanceDao.observeOpenVisitMosqueIds`): *Inside Zone* only once the visit is
       open; *confirming…* inside the circle before that; *GPS too weak to confirm* when the fix fails
@@ -619,6 +625,66 @@ Column names intentionally mirror the original spec so the SQLite file is inspec
       15 all time, same-name mosque isolation, ongoing rows, live rename, light/dark mode, 200% text at
       ~373 dp width and a long-name sheet in landscape. CSV from Today contained all 15 visits; cancel
       preserved the filter. Original emulator data and display settings were restored; no phone install.
+34. **Settings is a compact routine and saved-mosque editor, not a setup/control panel.**
+    - Removed Add Mosque Options (search/current-location handoff) and the Monitoring section (global
+      detection and auto-silent switches). `SettingsViewModel` no longer has search dependencies or
+      a monitoring setter, and `MainScreen` no longer passes an add-mosque navigation callback.
+    - No service, worker, geofence, controller or persisted default was changed. Opening Settings never
+      writes monitoring or routine preferences. Monitoring keeps its existing value; the Quick Settings
+      tile remains its control. A previously false `auto_silent` can be resumed explicitly, never silently.
+    - The surface-colored header and green overview match History. Read-only detection status remains
+      visible even when the arrival routine is paused, so fence failures are never hidden by routine status.
+      On arrival cards show selected counts for Sound & vibration, Do Not Disturb, Screen & device and
+      Arrival notification; Restore & notify contains the exit actions. Cards open scrollable native
+      sheets with full-row switch targets, automatic saves, access warnings and paused-state feedback.
+    - Your mosques cards wrap full names, show ID/radius, retain individual tracking, and present explicit
+      Full routine / Notify only choices with a selected checkmark. Rename has a labeled field; Delete
+      requires confirmation and warns that attendance is also deleted. Permission grants, ringer warnings and Restore now remain
+      accessible without expanding a category. Mosque creation remains on Home.
+    - Uses existing theme tokens and icons, stable-key LazyColumns and saveable sheet/dialog selection;
+      no new dependency or database migration. Rename/Delete use text-only buttons to fit large text;
+      bottom-navigation labels use one-line ellipsis instead of breaking words (full accessible names remain).
+      The existing PlaceSearch utility remains for connectivity checks in prayer-time retrieval, but no
+      Settings search UI calls its Geocoder path.
+    - Verified on Android 37.2 emulator (2026-10-25): empty/populated states, all five action sheets,
+      saved toggles, DND/system-settings routes, explicit legacy routine resume, blank/long-name rename,
+      individual tracking, both arrival choices, and delete cancel/confirm with visit-history removal.
+      Monitoring stayed enabled with its foreground service running through Settings edits, app updates,
+      navigation and app backgrounding. Three test fences were armed; opening Settings did not change
+      the seeded paused routine. Light/dark, 200% text at ~373 dp and landscape sheets were exercised;
+      Home/History/Qibla navigation remained reachable. No app runtime exceptions were logged.
+      Original emulator database, preferences, tiles and display settings were restored; no phone install.
+      Debug/release builds, all 131 unit tests and lint passed with zero Kotlin compiler warnings.
+35. **Unified app design and mosque/silent-phone branding.**
+    - `Theme.kt` explicitly defines light/dark primary, gold accents, surface-container, outline and error
+      roles; sheets, navigation and dialogs no longer inherit unrelated Material purple defaults.
+      `Color.kt` holds forest/mint/ivory/gold tokens, `Type.kt` provides the shared hierarchy, and Material
+      shapes use a consistent 8–28 dp scale. Wallpaper colors remain disabled to preserve identity.
+    - `ScreenScaffold` uses a neutral header with the compact vector brand mark; tab navigation keeps
+      state and uses explicit semantic selected colors. Shared cards use 20 dp padding and alerts wrap
+      their actions with matching error-container foregrounds. History filters retain selected checkmarks.
+    - Qibla has a centered, scrollable layout, density-aware compass and upright system-scaled cardinal
+      labels, accessible heading/bearing description, next-prayer card and explicitly labeled timetable.
+      Prayer silence uses a full-row switch and wrapping, checkmarked time choices. Location lifecycle,
+      prayer calculations, scheduling, countdown and tomorrow-Fajr behavior are unchanged.
+    - Home uses wrapping status chips and bounded, scrollable panels with a separate tiny map credit.
+      Wide landscape layouts place status at the left and editor/details at the right, leaving the centre
+      pin exposed and avoiding a clipped status line at 200% text. The semantic gold + stays round;
+      nameless saved-zone cards separate radius/distance from coordinates.
+      The radius editor retains 20–100 m snapping, live preview and independent 5% card /
+      50% slider opacity while dragging; map touch/drag/detection logic is unchanged.
+    - Adaptive launcher/splash, monochrome notification/tile, and compact in-app logo resources depict a
+      mosque inside a phone with a mute symbol. No new library, font download, database migration or
+      background/detection preference change is involved.
+    - Verified on Android 37.2 emulator (2026-10-25): all four tabs in light/dark, 200% text at ~373 dp,
+      landscape controls, History filters/mosque sheet/CSV-picker cancellation, prayer buffers and saved
+      routine switches. Home creation saved a numbered 90 m zone, slider hold/release retained 5%/50%
+      transparency, and the landscape editor scrolled to Save with its centre pin exposed. Both map
+      credits remained visible. Launcher, cold-launch splash, notification and Quick Settings marks were
+      visually checked. Monitoring remained active through navigation and the paused routine stayed paused.
+      No app runtime exceptions; original emulator database/preferences/tiles/display/animation settings
+      restored after removing test monitoring. No physical-phone installation.
+      Final debug/release builds, all 131 tests and lint passed with zero Kotlin compiler warnings.
 
 ---
 
@@ -811,9 +877,11 @@ directories the emulator loads from:
 1. Grant foreground location → "Allow all the time" → notifications → DND access from Home/Settings.
 2. Save your current position as a mosque; confirm the pin, the green circle, the blue dot on your
    own position and the instant check-in.
-3. Arm a few routine actions in Settings (e.g. *Silent ringer* + *Mute media* + *Dim the screen*),
-   then walk/teleport across the zone boundary; confirm each armed action lands on entry and the
-   exit actions put the originals back. Confirm Settings stops showing *Restore now*.
+3. Open Settings and confirm there are no Add Mosque Options or Monitoring sections; existing
+   background detection must stay active. Open the action categories, change *Silent ringer*, *Mute media*
+   and *Dim the screen*, and confirm choices persist after closing the sheet and relaunching. Check access
+   hints, dark mode and large text. Walk/teleport across the zone boundary; confirm selected actions land
+   on entry and exit actions put the originals back. Confirm Settings stops showing *Restore now*.
 4. Confirm History shows the right Today/week totals and method. Switch Today / This week / All time;
    check per-mosque totals and open a mosque's visit sheet. Check ongoing/overnight rows, light/dark and
    large text. Export from Today and confirm the CSV still contains all history; cancel must change nothing.
@@ -822,7 +890,9 @@ directories the emulator loads from:
    routine restored. Standing *on* the rim, expect the circle to flicker while the routine holds,
    and expect the visit to close once you have been outside the circle for a full minute (§5.25,
    §5.32).
-6. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it.
+6. Untrack a mosque in Settings; confirm its fence stops firing and the Home pill ignores it. Test
+   Full routine / Notify only, renaming (including blank/long names), and Delete cancel/confirm. Confirm
+   deletion removes that mosque's visits only and other mosques continue tracking.
 7. Switch the map style to *Satellite* (app bar layers button), confirm imagery loads and the
    corner credit changes, then confirm the choice survives an app restart.
 8. Reboot the device; confirm monitoring restarts (boot receiver).
@@ -842,9 +912,9 @@ directories the emulator loads from:
 5. The editor sheet has no mini-map: the green circle drawn on the main map behind the sheet *is*
    the live radius preview (and the exact geofence that gets armed). That is also why the sheet
    fades to 5% (slider at 50%) while the radius thumb is held — the preview must stay visible.
-6. Below API 33 the callback `Geocoder` API does not exist, so place search uses the blocking
-   `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there; API 33+ uses
-   the listener version. No API key or extra dependency either way.
+6. Below API 33 the callback `Geocoder` API does not exist, so the retained `PlaceSearch` utility uses
+   blocking `getFromLocationName` on `Dispatchers.IO` under `@Suppress("DEPRECATION")` there; API 33+
+   uses the listener version. Its search path is no longer exposed by Settings (§5.34).
 7. Prayer times are computed offline (MWL convention) and land within ~10 minutes of published
    timetables — fine for a ±15 min silence buffer, not authoritative. Where twilight never gets
    deep enough (high-latitude summer), Fajr/Isha fall back to the seventh-of-night rule.

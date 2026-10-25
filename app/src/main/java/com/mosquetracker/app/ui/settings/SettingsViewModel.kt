@@ -11,9 +11,6 @@ import com.mosquetracker.app.model.RoutineAction
 import com.mosquetracker.app.monitoring.MonitoringController
 import com.mosquetracker.app.routine.RoutineCoordinator
 import com.mosquetracker.app.routine.RoutineEngine
-import com.mosquetracker.app.ui.common.MosquePickRequest
-import com.mosquetracker.app.ui.common.PickRequest
-import com.mosquetracker.app.util.PlaceSearch
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,7 +27,7 @@ data class AccessState(
     val writeSettings: Boolean = false,
 )
 
-/** Backs Settings: the routine editor, the tracking toggles, mosque search and monitoring. */
+/** Backs Settings: routine editing and recovery, mosque management, and access status. */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val mosqueRepository: MosqueRepository,
@@ -38,8 +35,6 @@ class SettingsViewModel @Inject constructor(
     private val settingsStore: SettingsStore,
     private val routineEngine: RoutineEngine,
     private val routineCoordinator: RoutineCoordinator,
-    private val pickRequest: MosquePickRequest,
-    private val placeSearch: PlaceSearch,
 ) : ViewModel() {
 
     val mosques: StateFlow<List<MosqueEntity>> = mosqueRepository.mosques
@@ -65,20 +60,6 @@ class SettingsViewModel @Inject constructor(
 
     /** Which tracked mosques Android is watching with a geofence, and why the rest are not. */
     val fenceState: StateFlow<FenceState?> = monitoringController.fenceState
-
-    private val _online = MutableStateFlow(false)
-    /** Whether search is usable right now. Refreshed every time Settings is shown. */
-    val online: StateFlow<Boolean> = _online.asStateFlow()
-
-    private val _searching = MutableStateFlow(false)
-    val searching: StateFlow<Boolean> = _searching.asStateFlow()
-
-    private val _searchMessage = MutableStateFlow<String?>(null)
-    val searchMessage: StateFlow<String?> = _searchMessage.asStateFlow()
-
-    fun refreshOnline() {
-        _online.value = placeSearch.isOnline()
-    }
 
     /** Re-reads the two special accesses, which the user grants outside the app. */
     fun refreshAccess() {
@@ -140,55 +121,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setMonitoring(enabled: Boolean) {
-        viewModelScope.launch {
-            if (enabled) monitoringController.enableMonitoring() else monitoringController.disableMonitoring()
-        }
-    }
-
     fun setAutoSilent(enabled: Boolean) {
         viewModelScope.launch {
             settingsStore.setAutoSilent(enabled)
             routineCoordinator.reconcile()
         }
-    }
-
-    /** Hands off to the Home map picker, centred on the current GPS fix. */
-    fun useCurrentLocation() {
-        pickRequest.request(PickRequest.CurrentFix)
-    }
-
-    /**
-     * Searches for a place name, then hands off to the Home map picker at the match.
-     * Calls [onFound] (which switches tabs) only on a real result; every other outcome
-     * surfaces as helper text under the field.
-     */
-    fun searchPlace(query: String, onFound: () -> Unit) {
-        val trimmed = query.trim()
-        if (trimmed.isEmpty() || _searching.value) return
-        viewModelScope.launch {
-            _searching.value = true
-            _searchMessage.value = null
-            when (val result = placeSearch.search(trimmed)) {
-                is PlaceSearch.Result.Found -> {
-                    pickRequest.request(
-                        PickRequest.AtLocation(result.latitude, result.longitude),
-                    )
-                    onFound()
-                }
-
-                is PlaceSearch.Result.NoResults ->
-                    _searchMessage.value = "No match for \"$trimmed\" — try a nearby landmark."
-
-                is PlaceSearch.Result.Unavailable ->
-                    _searchMessage.value = result.message
-            }
-            _searching.value = false
-        }
-    }
-
-    fun clearSearchMessage() {
-        _searchMessage.value = null
     }
 
     init {

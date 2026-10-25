@@ -1,8 +1,11 @@
 package com.mosquetracker.app.ui.common
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -12,14 +15,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.mosquetracker.app.R
 
-/**
- * Inner scaffold for a tab: the outer [com.mosquetracker.app.ui.MainScreen] already
- * applies window insets, so this one intentionally consumes none of them.
- *
- * The header defaults to the MasjidSync brand bar (deep green with white text); pass explicit
- * colors for screens that need a different treatment.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenScaffold(
@@ -28,17 +28,26 @@ fun ScreenScaffold(
     navigationIcon: @Composable (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
-    headerContainerColor: Color = MaterialTheme.colorScheme.primary,
-    headerContentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    headerContainerColor: Color = MaterialTheme.colorScheme.surface,
+    headerContentColor: Color = MaterialTheme.colorScheme.onSurface,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
         modifier = modifier,
+        // The outer navigation scaffold owns the system insets.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text(title) },
-                navigationIcon = navigationIcon ?: {},
+                title = {
+                    Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+                navigationIcon = navigationIcon ?: {
+                    Image(
+                        painterResource(R.drawable.ic_brand_mark),
+                        contentDescription = null,
+                        modifier = Modifier.padding(start = 16.dp, end = 8.dp).size(32.dp),
+                    )
+                },
                 actions = actions,
                 windowInsets = WindowInsets(0, 0, 0, 0),
                 colors = TopAppBarDefaults.topAppBarColors(
